@@ -38,4 +38,33 @@ app.get("/poll", (req, res) => {
   res.json(queue);
 });
 
+import { EmbedBuilder } from "discord.js";
+
+app.post("/recap", async (req, res) => {
+	if (req.body.secret !== SECRET) return res.sendStatus(403);
+
+	const { year, results } = req.body;
+	const channel = await client.channels.fetch(process.env.RECAP_CHANNEL);
+
+	// Sort by placement (1st → last)
+	results.sort((a, b) => a.Placement - b.Placement);
+
+	const description = results.map(r => {
+		return `**${r.PlacementText} — ${r.Name}**
+🗡️ Kills: ${r.Kills}
+🎁 Sponsors: ${r.Sponsors}`;
+	}).join("\n\n");
+
+	const embed = new EmbedBuilder()
+		.setTitle(`🏆 Hunger Games ${year}`)
+		.setDescription(description)
+		.setColor(0xC0392B)
+		.setFooter({ text: "Panem Today • Official Recap" })
+		.setTimestamp();
+
+	await channel.send({ embeds: [embed] });
+	res.sendStatus(200);
+});
+
 app.listen(process.env.PORT || 3000);
+
