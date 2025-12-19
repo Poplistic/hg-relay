@@ -1,6 +1,13 @@
 import express from "express";
 import fs from "fs";
-import { Client, GatewayIntentBits, EmbedBuilder } from "discord.js";
+import {
+	Client,
+	GatewayIntentBits,
+	EmbedBuilder,
+	REST,
+	Routes,
+	SlashCommandBuilder
+} from "discord.js";
 
 /* ======================
    BASIC SERVER SETUP
@@ -21,14 +28,45 @@ const client = new Client({
 	intents: [GatewayIntentBits.Guilds]
 });
 
-client.once("ready", () => {
-	console.log(`🤖 Discord bot logged in as ${client.user.tag}`);
-});
-
 await client.login(process.env.DISCORD_TOKEN);
 
+client.once("ready", async () => {
+	console.log(`🤖 Logged in as ${client.user.tag}`);
+	await registerCommands();
+});
+
 /* ======================
-   PERSISTENT COMMAND QUEUE
+   SLASH COMMAND REGISTRATION
+====================== */
+
+async function registerCommands() {
+	const commands = [
+		new SlashCommandBuilder().setName("day").setDescription("Start daytime"),
+		new SlashCommandBuilder().setName("night").setDescription("Start nighttime"),
+		new SlashCommandBuilder().setName("finale").setDescription("Start finale"),
+		new SlashCommandBuilder()
+			.setName("year")
+			.setDescription("Set Hunger Games year")
+			.addIntegerOption(opt =>
+				opt.setName("number").setDescription("Year 1–100").setRequired(true)
+			),
+		new SlashCommandBuilder()
+			.setName("sponsor")
+			.setDescription("Trigger sponsor event")
+	].map(c => c.toJSON());
+
+	const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+
+	await rest.put(
+		Routes.applicationGuildCommands(client.user.id, process.env.GUILD_ID),
+		{ body: commands }
+	);
+
+	console.log("✅ Slash commands registered");
+}
+
+/* ======================
+   COMMAND QUEUE
 ====================== */
 
 function loadQueue() {
@@ -40,33 +78,69 @@ function saveQueue(queue) {
 	fs.writeFileSync(QUEUE_FILE, JSON.stringify(queue, null, 2));
 }
 
-/* ======================
-   LIVE STATE + TRACKING
-====================== */
-
-let latestState = [];
-let previousAlive = new Set();
-
-let liveMessageId = null;
-let sponsorMessageId = null;
-
-/* ======================
-   ROUTES
-====================== */
-
-app.post("/command", (req, res) => {
-	if (req.body.secret !== SECRET) return res.sendStatus(403);
-
+function enqueue(command, args = []) {
 	const queue = loadQueue();
-	queue.push({
-		command: req.body.command,
-		args: req.body.args || [],
-		time: Date.now()
-	});
+	queue.push({ command, args, time: Date.now() });
 	saveQueue(queue);
+}
 
-	res.sendStatus(200);
+/* ======================
+   DISCORD COMMAND HANDLER
+====================== */
+
+client.on("interactionCreate", async interaction => {
+	if (!interaction.isChatInputCommand()) return;
+
+	// Optional permission check
+	if (process.env.ADMIN_ROLE_ID) {
+		const member = interaction.member;
+		if (!member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
+			return interaction.reply({
+				content: "❌ You are not allowed to run this command.",
+				ephemeral: true
+			});
+		}
+	}
+
+	switch (interaction.commandName) {
+		case "day":
+			enqueue("DAY");
+			await interaction.reply("☀️ Day has begun.");
+			break;
+
+		case "night":
+			enqueue("NIGHT");
+			await interaction.reply("🌙 Night has fallen.");
+			break;
+
+		case "finale":
+			enqueue("FINALE");
+			await interaction.reply("🔥 Finale initiated.");
+			break;
+
+		case "year": {
+			const year = interaction.options.getInteger("number");
+			if (year < 1 || year > 100) {
+				return interaction.reply({
+					content: "❌ Year must be between 1 and 100.",
+					ephemeral: true
+				});
+			}
+			enqueue("YEAR", [year]);
+			await interaction.reply(`📜 Hunger Games Year set to ${year}.`);
+			break;
+		}
+
+		case "sponsor":
+			enqueue("SPONSOR");
+			await interaction.reply("🎁 Sponsor event triggered.");
+			break;
+	}
 });
+
+/* ======================
+   ROBLOX ROUTES
+====================== */
 
 app.get("/poll", (req, res) => {
 	if (req.query.secret !== SECRET) return res.sendStatus(403);
@@ -74,113 +148,6 @@ app.get("/poll", (req, res) => {
 	const queue = loadQueue();
 	saveQueue([]);
 	res.json(queue);
-});
-
-app.post("/state", (req, res) => {
-	if (req.body.secret !== SECRET) return res.sendStatus(403);
-
-	latestState = req.body.state || [];
-	res.sendStatus(200);
-});
-
-app.post("/recap", async (req, res) => {
-	if (req.body.secret !== SECRET) return res.sendStatus(403);
-
-	const { year, results } = req.body;
-	const channel = await client.channels.fetch(process.env.RECAP_CHANNEL);
-
-	results.sort((a, b) => a.Placement - b.Placement);
-
-	const description = results.map(r => (
-		`**${r.PlacementText} — ${r.Name}**
-🗡️ Kills: ${r.Kills}
-🎁 Sponsors: ${r.Sponsors}`
-	)).join("\n\n");
-
-	const embed = new EmbedBuilder()
-		.setTitle(`🏆 Hunger Games ${year}`)
-		.setDescription(description)
-		.setColor(0xC0392B)
-		.setFooter({ text: "Panem Today • Official Recap" })
-		.setTimestamp();
-
-	await channel.send({ embeds: [embed] });
-	res.sendStatus(200);
-});
-
-/* ======================
-   DISCORD LIVE LOOP
-====================== */
-
-client.once("ready", async () => {
-	console.log("📡 Live HG systems online");
-
-	const liveChannel = await client.channels.fetch(process.env.CHANNEL_ID);
-
-	setInterval(async () => {
-		if (!latestState.length) return;
-
-		/* ---- DEATH DETECTION ---- */
-		const currentAlive = new Set(
-			latestState.filter(t => t.alive).map(t => t.name)
-		);
-
-		for (const name of previousAlive) {
-			if (!currentAlive.has(name)) {
-				await liveChannel.send(`⚰️ **${name}** has fallen.`);
-			}
-		}
-
-		previousAlive = currentAlive;
-
-		/* ---- LIVE STATUS EMBED ---- */
-		const alive = latestState.filter(t => t.alive);
-
-		const liveEmbed = new EmbedBuilder()
-			.setTitle("🏹 Hunger Games Live")
-			.setDescription(`🟢 Alive: ${alive.length}`)
-			.setColor(0x2ECC71)
-			.addFields(
-				alive.map(t => ({
-					name: t.name,
-					value: `🗡️ ${t.kills}`,
-					inline: true
-				}))
-			)
-			.setTimestamp();
-
-		if (!liveMessageId) {
-			const msg = await liveChannel.send({ embeds: [liveEmbed] });
-			liveMessageId = msg.id;
-		} else {
-			const msg = await liveChannel.messages.fetch(liveMessageId);
-			await msg.edit({ embeds: [liveEmbed] });
-		}
-
-		/* ---- SPONSOR VOTE EMBED ---- */
-		const sponsorSorted = [...latestState]
-			.sort((a, b) => b.votes - a.votes)
-			.slice(0, 10);
-
-		const sponsorEmbed = new EmbedBuilder()
-			.setTitle("🎁 Sponsor Votes")
-			.setColor(0xF1C40F)
-			.setDescription(
-				sponsorSorted.map((t, i) =>
-					`**${i + 1}. ${t.name}** — 🗳️ ${t.votes}`
-				).join("\n")
-			)
-			.setTimestamp();
-
-		if (!sponsorMessageId) {
-			const msg = await liveChannel.send({ embeds: [sponsorEmbed] });
-			sponsorMessageId = msg.id;
-		} else {
-			const msg = await liveChannel.messages.fetch(sponsorMessageId);
-			await msg.edit({ embeds: [sponsorEmbed] });
-		}
-
-	}, 10000);
 });
 
 /* ======================
