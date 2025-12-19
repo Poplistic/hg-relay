@@ -6,7 +6,10 @@ import {
 	EmbedBuilder,
 	ActionRowBuilder,
 	ButtonBuilder,
-	ButtonStyle
+	ButtonStyle,
+	Events,
+	REST,
+	Routes
 } from "discord.js";
 
 /* ======================
@@ -16,8 +19,15 @@ import {
 const app = express();
 app.use(express.json());
 
-const SECRET = process.env.SECRET;
-const PORT = process.env.PORT || 3000;
+const {
+	SECRET,
+	DISCORD_TOKEN,
+	CLIENT_ID,
+	GUILD_ID,
+	CHANNEL_ID,
+	PORT = 3000
+} = process.env;
+
 const QUEUE_FILE = "./queue.json";
 
 /* ======================
@@ -28,11 +38,50 @@ const client = new Client({
 	intents: [GatewayIntentBits.Guilds]
 });
 
-await client.login(process.env.DISCORD_TOKEN);
+/* ======================
+   COMMAND REGISTRATION
+====================== */
 
-client.once("ready", () => {
-	console.log(`🤖 Logged in as ${client.user.tag}`);
-});
+const commands = [
+	{ name: "day", description: "Start daytime" },
+	{ name: "night", description: "Start nighttime" },
+	{ name: "finale", description: "Start finale" },
+	{
+		name: "year",
+		description: "Set Hunger Games year",
+		options: [
+			{
+				name: "number",
+				description: "Year 1–100",
+				type: 4,
+				required: true
+			}
+		]
+	},
+	{ name: "sponsor", description: "Trigger sponsor event" }
+];
+
+async function registerCommands() {
+	const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
+
+	try {
+		if (GUILD_ID) {
+			console.log("📌 Registering GUILD commands");
+			await rest.put(
+				Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+				{ body: commands }
+			);
+		} else {
+			console.log("🌍 Registering GLOBAL commands");
+			await rest.put(
+				Routes.applicationCommands(CLIENT_ID),
+				{ body: commands }
+			);
+		}
+	} catch (err) {
+		console.error("❌ Command registration failed:", err);
+	}
+}
 
 /* ======================
    COMMAND QUEUE
@@ -40,7 +89,7 @@ client.once("ready", () => {
 
 function loadQueue() {
 	if (!fs.existsSync(QUEUE_FILE)) return [];
-	return JSON.parse(fs.readFileSync(QUEUE_FILE));
+	return JSON.parse(fs.readFileSync(QUEUE_FILE, "utf8"));
 }
 
 function saveQueue(queue) {
@@ -52,7 +101,7 @@ function saveQueue(queue) {
 ====================== */
 
 let latestState = [];
-let sponsorVotes = {}; // name -> votes
+let sponsorVotes = {};
 let oddsMessageId = null;
 let voteMessageId = null;
 
@@ -72,7 +121,6 @@ app.post("/state", (req, res) => {
 
 	latestState = req.body.state || [];
 
-	// sync sponsor votes
 	for (const t of latestState) {
 		if (!sponsorVotes[t.name]) sponsorVotes[t.name] = t.votes || 0;
 	}
@@ -84,7 +132,7 @@ app.post("/state", (req, res) => {
    DISCORD BUTTON VOTING
 ====================== */
 
-client.on("interactionCreate", async interaction => {
+client.on(Events.InteractionCreate, async interaction => {
 	if (!interaction.isButton()) return;
 
 	const name = interaction.customId.replace("vote_", "");
@@ -97,19 +145,22 @@ client.on("interactionCreate", async interaction => {
 });
 
 /* ======================
-   LIVE ODDS + VOTING EMBEDS
+   READY + LIVE EMBEDS
 ====================== */
 
-client.once("ready", async () => {
-	const channel = await client.channels.fetch(process.env.CHANNEL_ID);
+client.once(Events.ClientReady, async bot => {
+	console.log(`🤖 Logged in as ${bot.user.tag}`);
+
+	await registerCommands();
+
+	const channel = await bot.channels.fetch(CHANNEL_ID);
 
 	setInterval(async () => {
 		if (!latestState.length) return;
 
-		/* ---- CALCULATE ODDS ---- */
 		const scored = latestState.map(t => {
 			const votes = sponsorVotes[t.name] || 0;
-			const score = (t.kills * 2) + votes;
+			const score = t.kills * 2 + votes;
 			return { ...t, votes, score };
 		});
 
@@ -120,14 +171,16 @@ client.once("ready", async () => {
 		});
 
 		/* ---- ODDS EMBED ---- */
+
 		const oddsEmbed = new EmbedBuilder()
 			.setTitle("🎲 Live Victory Odds")
-			.setColor(0x9B59B6)
+			.setColor(0x9b59b6)
 			.setDescription(
 				scored
 					.sort((a, b) => b.odds - a.odds)
-					.map(t =>
-						`**${t.name}** — ${t.odds}% 🗡️ ${t.kills} 🎁 ${t.votes}`
+					.map(
+						t =>
+							`**${t.name}** — ${t.odds}% 🗡️ ${t.kills} 🎁 ${t.votes}`
 					)
 					.join("\n")
 			)
@@ -142,6 +195,7 @@ client.once("ready", async () => {
 		}
 
 		/* ---- VOTING EMBED ---- */
+
 		const buttons = scored
 			.filter(t => t.alive)
 			.slice(0, 5)
@@ -157,7 +211,7 @@ client.once("ready", async () => {
 		const voteEmbed = new EmbedBuilder()
 			.setTitle("🎁 Sponsor a Tribute")
 			.setDescription("Click a button to send sponsor support!")
-			.setColor(0xF1C40F);
+			.setColor(0xf1c40f);
 
 		if (!voteMessageId) {
 			const msg = await channel.send({
@@ -172,7 +226,6 @@ client.once("ready", async () => {
 				components: [row]
 			});
 		}
-
 	}, 10000);
 });
 
@@ -183,3 +236,5 @@ client.once("ready", async () => {
 app.listen(PORT, () => {
 	console.log(`🚀 HG Relay running on port ${PORT}`);
 });
+
+await client.login(DISCORD_TOKEN);
