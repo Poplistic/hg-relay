@@ -77,28 +77,38 @@ const commands = [
 			}
 		]
 	},
-	{ name: "sponsor", description: "Trigger sponsor event" }
+	{ name: "sponsor", description: "Trigger sponsor event" },
+	{
+		name: "storm",
+		description: "Control storm weather",
+		options: [
+			{
+				name: "state",
+				description: "Start or stop the storm",
+				type: 3,
+				required: true,
+				choices: [
+					{ name: "start", value: "START" },
+					{ name: "stop", value: "STOP" }
+				]
+			}
+		]
+	}
 ];
 
 async function registerCommands() {
 	const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
 
-	try {
-		if (GUILD_ID) {
-			await rest.put(
-				Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-				{ body: commands }
-			);
-			console.log("📌 Guild commands registered");
-		} else {
-			await rest.put(
-				Routes.applicationCommands(CLIENT_ID),
-				{ body: commands }
-			);
-			console.log("🌍 Global commands registered");
-		}
-	} catch (err) {
-		console.error("❌ Command registration failed:", err);
+	if (GUILD_ID) {
+		await rest.put(
+			Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+			{ body: commands }
+		);
+	} else {
+		await rest.put(
+			Routes.applicationCommands(CLIENT_ID),
+			{ body: commands }
+		);
 	}
 }
 
@@ -119,8 +129,7 @@ app.get("/poll", (req, res) => {
 	if (req.query.secret !== SECRET) return res.sendStatus(403);
 
 	const queue = loadQueue();
-	saveQueue([]); // one-time commands
-
+	saveQueue([]);
 	res.json(queue);
 });
 
@@ -143,130 +152,56 @@ app.post("/state", (req, res) => {
 ====================== */
 
 client.on(Events.InteractionCreate, async interaction => {
-	/* ---- SLASH COMMANDS ---- */
-
 	if (interaction.isChatInputCommand()) {
-		try {
-			switch (interaction.commandName) {
-				case "day":
-					enqueue("DAY");
-					await interaction.reply("🌞 Day started in-game.");
-					break;
+		switch (interaction.commandName) {
+			case "day":
+				enqueue("DAY");
+				await interaction.reply("🌞 Day started.");
+				break;
 
-				case "night":
-					enqueue("NIGHT");
-					await interaction.reply("🌙 Night started in-game.");
-					break;
+			case "night":
+				enqueue("NIGHT");
+				await interaction.reply("🌙 Night started.");
+				break;
 
-				case "finale":
-					enqueue("FINALE");
-					await interaction.reply("🔥 Finale started in-game.");
-					break;
+			case "finale":
+				enqueue("FINALE");
+				await interaction.reply("🔥 Finale started.");
+				break;
 
-				case "year": {
-					const year = interaction.options.getInteger("number");
-					enqueue("YEAR", [year]);
-					await interaction.reply(`📅 Year set to **${year}**`);
-					break;
-				}
-
-				case "sponsor":
-					enqueue("SPONSOR");
-					await interaction.reply("🎁 Sponsor event triggered.");
-					break;
+			case "year": {
+				const year = interaction.options.getInteger("number");
+				enqueue("YEAR", [year]);
+				await interaction.reply(`📅 Year set to ${year}`);
+				break;
 			}
-		} catch (err) {
-			console.error(err);
-			if (!interaction.replied) {
-				await interaction.reply({
-					content: "❌ Command failed.",
-					ephemeral: true
-				});
+
+			case "sponsor":
+				enqueue("SPONSOR");
+				await interaction.reply("🎁 Sponsor triggered.");
+				break;
+
+			case "storm": {
+				const state = interaction.options.getString("state");
+				enqueue("STORM", [state]);
+				await interaction.reply(
+					state === "START"
+						? "🌩️ Storm started."
+						: "☀️ Storm stopped."
+				);
+				break;
 			}
 		}
-		return;
-	}
-
-	/* ---- BUTTONS ---- */
-
-	if (interaction.isButton()) {
-		const name = interaction.customId.replace("vote_", "");
-		sponsorVotes[name] = (sponsorVotes[name] || 0) + 1;
-
-		await interaction.reply({
-			content: `🎁 You sponsored **${name}**!`,
-			ephemeral: true
-		});
 	}
 });
 
 /* ======================
-   READY + EMBEDS
+   READY
 ====================== */
 
 client.once(Events.ClientReady, async bot => {
 	console.log(`🤖 Logged in as ${bot.user.tag}`);
 	await registerCommands();
-
-	const channel = await bot.channels.fetch(CHANNEL_ID);
-
-	setInterval(async () => {
-		if (!latestState.length) return;
-
-		const scored = latestState.map(t => {
-			const votes = sponsorVotes[t.name] || 0;
-			const score = t.kills * 2 + votes;
-			return { ...t, votes, score };
-		});
-
-		const max = Math.max(...scored.map(t => t.score), 1);
-		scored.forEach(t => (t.odds = Math.round((t.score / max) * 100)));
-
-		const oddsEmbed = new EmbedBuilder()
-			.setTitle("🎲 Live Victory Odds")
-			.setColor(0x9b59b6)
-			.setDescription(
-				scored
-					.sort((a, b) => b.odds - a.odds)
-					.map(
-						t =>
-							`**${t.name}** — ${t.odds}% 🗡️ ${t.kills} 🎁 ${t.votes}`
-					)
-					.join("\n")
-			);
-
-		if (!oddsMessageId) {
-			oddsMessageId = (await channel.send({ embeds: [oddsEmbed] })).id;
-		} else {
-			const msg = await channel.messages.fetch(oddsMessageId);
-			await msg.edit({ embeds: [oddsEmbed] });
-		}
-
-		const buttons = scored
-			.filter(t => t.alive)
-			.slice(0, 5)
-			.map(t =>
-				new ButtonBuilder()
-					.setCustomId(`vote_${t.name}`)
-					.setLabel(t.name)
-					.setStyle(ButtonStyle.Primary)
-			);
-
-		const voteEmbed = new EmbedBuilder()
-			.setTitle("🎁 Sponsor a Tribute")
-			.setColor(0xf1c40f);
-
-		const row = new ActionRowBuilder().addComponents(buttons);
-
-		if (!voteMessageId) {
-			voteMessageId = (
-				await channel.send({ embeds: [voteEmbed], components: [row] })
-			).id;
-		} else {
-			const msg = await channel.messages.fetch(voteMessageId);
-			await msg.edit({ embeds: [voteEmbed], components: [row] });
-		}
-	}, 10000);
 });
 
 /* ======================
