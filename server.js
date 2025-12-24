@@ -3,9 +3,7 @@ import fs from "fs";
 import {
 	Client,
 	GatewayIntentBits,
-	Events,
-	REST,
-	Routes
+	Events
 } from "discord.js";
 
 const app = express();
@@ -14,8 +12,6 @@ app.use(express.json());
 const {
 	SECRET,
 	DISCORD_TOKEN,
-	CLIENT_ID,
-	GUILD_ID,
 	PORT = 10000,
 	RECAP_CHANNEL_ID
 } = process.env;
@@ -39,6 +35,23 @@ app.post("/state", (req, res) => {
 });
 
 /* ======================
+   ROTATION ARROWS
+====================== */
+
+function rotationArrow(deg = 0) {
+	const d = ((deg % 360) + 360) % 360;
+
+	if (d >= 337.5 || d < 22.5) return "⬆️";
+	if (d < 67.5) return "↗️";
+	if (d < 112.5) return "➡️";
+	if (d < 157.5) return "↘️";
+	if (d < 202.5) return "⬇️";
+	if (d < 247.5) return "↙️";
+	if (d < 292.5) return "⬅️";
+	return "↖️";
+}
+
+/* ======================
    MAP RENDER
 ====================== */
 
@@ -53,7 +66,7 @@ function renderMap(tributes, size = 10) {
 		const x = Math.floor(t.position.x * (size - 1));
 		const z = Math.floor(t.position.z * (size - 1));
 
-		grid[z][x] = "🟢";
+		grid[z][x] = rotationArrow(t.rotation);
 	}
 
 	return grid.map(r => r.join("")).join("\n");
@@ -73,7 +86,7 @@ async function updateLiveEmbed() {
 	const dead = state.tributes.filter(t => !t.alive);
 
 	const tributeLines = state.tributes.map(t =>
-		`${t.alive ? "🟢" : "🔴"} ${t.name} (${t.kills}⚔️)`
+		`${t.alive ? "🟢" : "🔴"} **D${t.district}** ${t.displayName} (${t.kills}⚔️)`
 	);
 
 	const embed = {
