@@ -207,7 +207,25 @@ setInterval(updatePlayers, 1000);
 /* ======================
    VOLUMETRIC SHADER
 ====================== */
-/* (UNCHANGED — omitted here for brevity, keep yours exactly as-is) */
+const VolumetricShader = {
+	uniforms: {
+		tDiffuse: { value: null },
+		tDepth: { value: depthTexture },
+		cameraNear: { value: camera.near },
+		cameraFar: { value: camera.far },
+
+		uPlayers: { value: Array.from({ length: MAX_PLAYERS }, () => new THREE.Vector3()) },
+		uPlayerCount: { value: 0 },
+
+		uGhosts: { value: Array.from({ length: MAX_PLAYERS }, () => new THREE.Vector3()) },
+		uGhostCount: { value: 0 },
+
+		uScanRadius: { value: 0 },
+		uScanWidth: { value: 120.0 }
+	},
+	vertexShader: `...`,
+	fragmentShader: `...`
+};
 
 /* ======================
    COMPOSER
