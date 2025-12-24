@@ -1,116 +1,282 @@
-import express from "express";
-import path from "path";
-import { fileURLToPath } from "url";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hunger Games Arena Map</title>
 
-import {
-	Client,
-	GatewayIntentBits,
-	Events,
-	REST,
-	Routes
-} from "discord.js";
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+<style>
+	body {
+		margin: 0;
+		overflow: hidden;
+		background: radial-gradient(#050505, #000);
+		font-family: Arial, sans-serif;
+		touch-action: none;
+	}
+
+	.label {
+		position: absolute;
+		color: #fff;
+		font-size: 12px;
+		text-align: center;
+		pointer-events: none;
+		transform: translate(-50%, -50%);
+		text-shadow: 0 0 6px #ff4444;
+		opacity: 0.75;
+	}
+
+	.label.selected {
+		font-size: 14px;
+		opacity: 1;
+		text-shadow:
+			0 0 8px #ffaaaa,
+			0 0 16px #ff0000;
+	}
+</style>
+
+<!-- ✅ IMPORT MAP (REQUIRED) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+
+<body>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 
 /* ======================
-   PATH SETUP (IMPORTANT)
+   RENDERER
 ====================== */
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const renderer = new THREE.WebGLRenderer({
+	antialias: true,
+	powerPreference: "high-performance"
+});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = false;
+document.body.appendChild(renderer.domElement);
 
 /* ======================
-   EXPRESS APP
+   SCENE / CAMERA
 ====================== */
 
-const app = express();
-app.use(express.json());
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 800, 4000);
 
-// ✅ ABSOLUTE static path (prevents Render serving wrong files)
-app.use(express.static(path.join(__dirname, "public")));
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000);
+camera.position.set(0, 900, 1400);
 
 /* ======================
-   ENV
+   MOBILE-FRIENDLY CONTROLS
 ====================== */
 
-const {
-	SECRET,
-	DISCORD_TOKEN,
-	CLIENT_ID,
-	GUILD_ID,
-	PORT = 10000
-} = process.env;
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+controls.enablePan = true;
+controls.enableRotate = true;
+controls.enableZoom = true;
+
+controls.touches = {
+	ONE: THREE.TOUCH.ROTATE,
+	TWO: THREE.TOUCH.DOLLY_PAN
+};
+
+controls.minDistance = 400;
+controls.maxDistance = 3000;
+controls.maxPolarAngle = Math.PI / 2.1;
 
 /* ======================
-   LIVE MAP STATE
+   LIGHTING
 ====================== */
 
-let liveMapState = [];
+scene.add(new THREE.AmbientLight(0x666666));
 
-app.post("/map", (req, res) => {
-	if (req.body.secret !== SECRET) return res.sendStatus(403);
-	liveMapState = req.body.players || [];
-	res.sendStatus(200);
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(800, 1500, 600);
+scene.add(sun);
+
+/* ======================
+   OPTIMIZED OBJ LOADING
+====================== */
+
+const manager = new THREE.LoadingManager();
+
+manager.onLoad = () => {
+	console.log("Arena loaded");
+};
+
+const objLoader = new OBJLoader(manager);
+
+objLoader.load("./arena.obj", obj => {
+	obj.traverse(m => {
+		if (!m.isMesh) return;
+
+		m.castShadow = false;
+		m.receiveShadow = false;
+		m.frustumCulled = true;
+
+		m.material = new THREE.MeshStandardMaterial({
+			color: 0x2a2a2a,
+			roughness: 0.85,
+			metalness: 0.15
+		});
+	});
+
+	obj.scale.set(20, 20, 20);
+	obj.matrixAutoUpdate = false;
+	obj.updateMatrix();
+
+	scene.add(obj);
 });
 
-app.get("/map", (req, res) => {
-	res.json(liveMapState);
-});
-
 /* ======================
-   ROOT ROUTE (OPTIONAL)
+   PLAYER MARKERS
 ====================== */
 
-app.get("/", (req, res) => {
-	res.sendFile(path.join(__dirname, "public", "map.html"));
-});
+const markers = new Map();
+const clickable = [];
+let selected = null;
 
-/* ======================
-   DISCORD BOT
-====================== */
+function createMarker(player) {
+	const group = new THREE.Group();
 
-const client = new Client({
-	intents: [GatewayIntentBits.Guilds]
-});
-
-const commands = [
-	{ name: "map", description: "View live arena map" }
-];
-
-async function registerCommands() {
-	const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
-
-	await rest.put(
-		GUILD_ID
-			? Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID)
-			: Routes.applicationCommands(CLIENT_ID),
-		{ body: commands }
+	const core = new THREE.Mesh(
+		new THREE.SphereGeometry(10, 16, 16),
+		new THREE.MeshBasicMaterial({ color: 0xff3333 })
 	);
+	group.add(core);
+
+	const glow = new THREE.Mesh(
+		new THREE.SphereGeometry(18, 16, 16),
+		new THREE.MeshBasicMaterial({
+			color: 0xff0000,
+			transparent: true,
+			opacity: 0.35
+		})
+	);
+	group.add(glow);
+
+	const ring = new THREE.Mesh(
+		new THREE.RingGeometry(22, 28, 32),
+		new THREE.MeshBasicMaterial({
+			color: 0xffffaa,
+			side: THREE.DoubleSide,
+			transparent: true,
+			opacity: 0
+		})
+	);
+	ring.rotation.x = -Math.PI / 2;
+	group.add(ring);
+
+	group.userData.userId = player.userId;
+	clickable.push(core);
+
+	const label = document.createElement("div");
+	label.className = "label";
+	label.innerHTML = `<b>D${player.district}</b><br>${player.name}`;
+	document.body.appendChild(label);
+
+	scene.add(group);
+	markers.set(player.userId, { group, core, glow, ring, label });
 }
 
-client.on(Events.InteractionCreate, async interaction => {
-	if (!interaction.isChatInputCommand()) return;
-
-	if (interaction.commandName === "map") {
-		await interaction.reply({
-			embeds: [{
-				title: "🗺️ Live Arena Map",
-				description: "[Open 3D Map](https://hg-relay.onrender.com/map.html)",
-				color: 0xff0000
-			}]
-		});
-	}
-});
-
-client.once(Events.ClientReady, async bot => {
-	console.log(`🤖 Logged in as ${bot.user.tag}`);
-	await registerCommands();
-});
-
-await client.login(DISCORD_TOKEN);
-
 /* ======================
-   START SERVER
+   SELECTION
 ====================== */
 
-app.listen(PORT, () => {
-	console.log(`🚀 HG Relay running on port ${PORT}`);
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+window.addEventListener("pointerdown", e => {
+	mouse.x = (e.clientX / innerWidth) * 2 - 1;
+	mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+
+	raycaster.setFromCamera(mouse, camera);
+	const hits = raycaster.intersectObjects(clickable);
+
+	selectMarker(hits.length ? hits[0].object.parent.userData.userId : null);
 });
+
+function selectMarker(id) {
+	if (selected && markers.has(selected)) {
+		const m = markers.get(selected);
+		m.ring.material.opacity = 0;
+		m.label.classList.remove("selected");
+	}
+
+	selected = id;
+
+	if (markers.has(id)) {
+		const m = markers.get(id);
+		m.ring.material.opacity = 0.8;
+		m.label.classList.add("selected");
+	}
+}
+
+/* ======================
+   UPDATE PLAYERS
+====================== */
+
+async function updatePlayers() {
+	const res = await fetch("/map");
+	const players = await res.json();
+
+	for (const p of players) {
+		if (!markers.has(p.userId)) createMarker(p);
+
+		const { group, label } = markers.get(p.userId);
+		group.position.set(p.x, 15, p.z);
+
+		const screenPos = group.position.clone().project(camera);
+		label.style.left = ((screenPos.x + 1) / 2 * innerWidth) + "px";
+		label.style.top = ((-screenPos.y + 1) / 2 * innerHeight) + "px";
+	}
+}
+
+/* ======================
+   ANIMATE
+====================== */
+
+function animate() {
+	controls.update();
+
+	const pulse = 1 + Math.sin(Date.now() * 0.004) * 0.25;
+	for (const m of markers.values()) {
+		m.glow.scale.set(pulse, pulse, pulse);
+	}
+
+	renderer.render(scene, camera);
+}
+
+/* ======================
+   RESIZE
+====================== */
+
+window.addEventListener("resize", () => {
+	camera.aspect = innerWidth / innerHeight;
+	camera.updateProjectionMatrix();
+	renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ======================
+   START
+====================== */
+
+setInterval(updatePlayers, 250);
+renderer.setAnimationLoop(animate);
+</script>
+
+</body>
+</html>
