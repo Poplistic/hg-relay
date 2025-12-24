@@ -24,6 +24,7 @@ body {
 
 <script type="module">
 import * as THREE from "three";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js";
@@ -38,7 +39,7 @@ const SCAN_SPEED = 220;
 const SCAN_MAX = 3500;
 
 /* ======================
-   RENDERER
+   RENDERER + DEPTH
 ====================== */
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -46,6 +47,9 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 renderer.autoClear = false;
 document.body.appendChild(renderer.domElement);
+
+const depthTexture = new THREE.DepthTexture();
+depthTexture.type = THREE.UnsignedShortType;
 
 /* ======================
    SCENE / CAMERA
@@ -56,7 +60,18 @@ scene.background = new THREE.Color(0x000000);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000);
 camera.position.set(1800, 1400, 1800);
-camera.lookAt(0, 0, 0);
+
+/* ======================
+   CONTROLS
+====================== */
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 400;
+controls.maxDistance = 5000;
+controls.maxPolarAngle = Math.PI / 2.1;
+controls.target.set(0, 0, 0);
 
 /* ======================
    LIGHTING
@@ -88,12 +103,7 @@ new OBJLoader().load("./arena.obj", obj => {
    PLAYER STATE
 ====================== */
 
-const players = new Map();
-// id → { mesh, fade, lastPos, alive }
-
-/* ======================
-   PLAYER MARKERS
-====================== */
+const players = new Map(); // userId → state
 
 const markerGeo = new THREE.SphereGeometry(18, 16, 16);
 const markerMat = new THREE.MeshBasicMaterial({
@@ -107,24 +117,21 @@ const markerMat = new THREE.MeshBasicMaterial({
 
 async function updatePlayers() {
 	const data = await fetch("/map").then(r => r.json());
-	const aliveIds = new Set();
+	const aliveIds = new Set(data.map(p => p.userId));
 
 	for (const p of data) {
-		aliveIds.add(p.userId);
+		let pl = players.get(p.userId);
 
-		let pl;
-		if (!players.has(p.userId)) {
+		if (!pl) {
 			const mesh = new THREE.Mesh(markerGeo, markerMat.clone());
 			scene.add(mesh);
 			pl = {
 				mesh,
-				fade: 1,
 				lastPos: new THREE.Vector3(),
+				fade: 1,
 				alive: true
 			};
 			players.set(p.userId, pl);
-		} else {
-			pl = players.get(p.userId);
 		}
 
 		pl.mesh.position.set(p.x, 15, p.z);
@@ -133,8 +140,8 @@ async function updatePlayers() {
 		pl.alive = true;
 	}
 
-	for (const pl of players.values()) {
-		if (!aliveIds.has(pl.mesh?.uuid)) {
+	for (const [id, pl] of players) {
+		if (!aliveIds.has(id)) {
 			pl.alive = false;
 			pl.fade -= 0.02;
 
@@ -158,7 +165,7 @@ setInterval(updatePlayers, 1000);
 const VolumetricShader = {
 	uniforms: {
 		tDiffuse: { value: null },
-		tDepth: { value: null },
+		tDepth: { value: depthTexture },
 		cameraNear: { value: camera.near },
 		cameraFar: { value: camera.far },
 
@@ -182,7 +189,6 @@ const VolumetricShader = {
 
 	fragmentShader: `
 		#include <packing>
-
 		uniform sampler2D tDiffuse;
 		uniform sampler2D tDepth;
 		uniform float cameraNear;
@@ -190,10 +196,8 @@ const VolumetricShader = {
 
 		uniform vec3 uPlayers[32];
 		uniform int uPlayerCount;
-
 		uniform vec3 uGhosts[32];
 		uniform int uGhostCount;
-
 		uniform float uScanRadius;
 		uniform float uScanWidth;
 
@@ -204,27 +208,8 @@ const VolumetricShader = {
 			return perspectiveDepthToViewZ(z, cameraNear, cameraFar);
 		}
 
-		float aliveGlow(vec3 p) {
-			float g = 0.0;
-			for (int i = 0; i < 32; i++) {
-				if (i >= uPlayerCount) break;
-				g += exp(-length(p - uPlayers[i]) * 0.03);
-			}
-			return g;
-		}
-
-		float ghostGlow(vec3 p) {
-			float g = 0.0;
-			for (int i = 0; i < 32; i++) {
-				if (i >= uGhostCount) break;
-
-				float d = length(p - uGhosts[i]);
-				float ring = abs(length(p.xz) - uScanRadius);
-				float scan = exp(-ring / uScanWidth);
-
-				g += exp(-d * 0.04) * scan * 2.5;
-			}
-			return g;
+		float glow(vec3 p, vec3 src) {
+			return exp(-length(p - src) * 0.03);
 		}
 
 		vec3 raymarch(vec3 ro, vec3 rd, float maxT) {
@@ -233,12 +218,22 @@ const VolumetricShader = {
 
 			for (int i = 0; i < 80; i++) {
 				if (t > maxT) break;
-
 				vec3 p = ro + rd * t;
 
 				float fog = exp(-length(p.xz) * 0.002);
-				float alive = aliveGlow(p);
-				float ghost = ghostGlow(p);
+
+				float alive = 0.0;
+				for (int j = 0; j < 32; j++) {
+					if (j >= uPlayerCount) break;
+					alive += glow(p, uPlayers[j]);
+				}
+
+				float ghost = 0.0;
+				for (int j = 0; j < 32; j++) {
+					if (j >= uGhostCount) break;
+					float ring = abs(length(p.xz) - uScanRadius);
+					ghost += glow(p, uGhosts[j]) * exp(-ring / uScanWidth);
+				}
 
 				col += (
 					vec3(0.2, 0.4, 0.8) * fog +
@@ -253,23 +248,23 @@ const VolumetricShader = {
 
 		void main() {
 			float depth = -readDepth(vUv);
-
 			vec3 ro = vec3(0.0, 900.0, 0.0);
 			vec3 rd = normalize(vec3(vUv - 0.5, -1.0));
-
 			vec3 fog = raymarch(ro, rd, depth);
 			vec3 base = texture2D(tDiffuse, vUv).rgb;
-
 			gl_FragColor = vec4(base + fog, 1.0);
 		}
 	`
 };
 
 /* ======================
-   POST PROCESS
+   COMPOSER
 ====================== */
 
 const composer = new EffectComposer(renderer);
+composer.renderTarget1.depthTexture = depthTexture;
+composer.renderTarget2.depthTexture = depthTexture;
+
 composer.addPass(new RenderPass(scene, camera));
 
 const volPass = new ShaderPass(VolumetricShader);
@@ -282,20 +277,17 @@ composer.addPass(volPass);
 
 function animate(t) {
 	requestAnimationFrame(animate);
+	controls.update();
 
 	volPass.uniforms.uScanRadius.value =
 		(t * 0.001 * SCAN_SPEED) % SCAN_MAX;
 
-	let alive = 0;
-	let ghosts = 0;
-
+	let alive = 0, ghosts = 0;
 	for (const pl of players.values()) {
-		if (pl.alive && alive < MAX_PLAYERS) {
+		if (pl.alive && alive < MAX_PLAYERS)
 			volPass.uniforms.uPlayers.value[alive++].copy(pl.lastPos);
-		}
-		if (!pl.alive && ghosts < MAX_PLAYERS) {
+		if (!pl.alive && ghosts < MAX_PLAYERS)
 			volPass.uniforms.uGhosts.value[ghosts++].copy(pl.lastPos);
-		}
 	}
 
 	volPass.uniforms.uPlayerCount.value = alive;
