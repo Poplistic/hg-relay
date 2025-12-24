@@ -228,9 +228,14 @@ setInterval(updatePlayers, 1000);
    CLICK TO FOCUS
 ====================== */
 
-addEventListener("click", e => {
-	mouse.x = (e.clientX / innerWidth) * 2 - 1;
-	mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+renderer.domElement.addEventListener("pointerdown", e => {
+	// Ignore multi-touch (pinch / rotate)
+	if (e.pointerType === "touch" && e.isPrimary === false) return;
+
+	const rect = renderer.domElement.getBoundingClientRect();
+
+	mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+	mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
 	raycaster.setFromCamera(mouse, camera);
 
@@ -239,7 +244,7 @@ addEventListener("click", e => {
 		if (pl.mesh) meshes.push(pl.mesh);
 	}
 
-	const hits = raycaster.intersectObjects(meshes);
+	const hits = raycaster.intersectObjects(meshes, false);
 	if (!hits.length) return;
 
 	const hitMesh = hits[0].object;
