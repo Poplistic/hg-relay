@@ -1,14 +1,45 @@
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
-import { EffectComposer } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/postprocessing/RenderPass.js";
-import { ShaderPass } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/postprocessing/ShaderPass.js";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>HG Arena Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body {
+	margin: 0;
+	overflow: hidden;
+	background: black;
+}
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<script type="module">
+import * as THREE from "three";
+import { EffectComposer } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js";
+import { ShaderPass } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js";
+import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
+
+/* ======================
+   CONSTANTS
+====================== */
 
 const MAX_PLAYERS = 32;
-const ARENA_RADIUS = 3000;
+const SCAN_SPEED = 220;
+const SCAN_MAX = 3500;
 
-/* =========================
-   SCENE
-========================= */
+/* ======================
+   RENDERER
+====================== */
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -16,87 +47,114 @@ renderer.setPixelRatio(devicePixelRatio);
 renderer.autoClear = false;
 document.body.appendChild(renderer.domElement);
 
+/* ======================
+   SCENE / CAMERA
+====================== */
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
 
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 1, 10000);
-camera.position.set(2000, 1800, 2000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000);
+camera.position.set(1800, 1400, 1800);
 camera.lookAt(0, 0, 0);
 
-/* =========================
-   ARENA (placeholder mesh)
-========================= */
+/* ======================
+   LIGHTING
+====================== */
 
-const arena = new THREE.Mesh(
-	new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS, 200, 128, 1, true),
-	new THREE.MeshStandardMaterial({
-		color: 0x111111,
-		roughness: 1,
-		metalness: 0
-	})
-);
-arena.position.y = -100;
-scene.add(arena);
+scene.add(new THREE.AmbientLight(0x222222));
 
-const light = new THREE.DirectionalLight(0xffffff, 0.8);
-light.position.set(300, 800, 200);
-scene.add(light);
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(800, 1600, 600);
+scene.add(sun);
 
-/* =========================
+/* ======================
+   ARENA MESH
+====================== */
+
+const loader = new OBJLoader();
+loader.load("./arena.obj", obj => {
+	obj.traverse(m => {
+		if (!m.isMesh) return;
+		m.material = new THREE.MeshStandardMaterial({
+			color: 0x111111,
+			roughness: 1,
+			metalness: 0
+		});
+	});
+	scene.add(obj);
+});
+
+/* ======================
    PLAYER STATE
-========================= */
+====================== */
 
-const players = new Map(); // id → { pos, fade }
+const players = new Map();
+// id → { mesh, fade, lastPos, alive }
 
-/* =========================
+/* ======================
    PLAYER MARKERS
-========================= */
+====================== */
 
-const markerGeo = new THREE.SphereGeometry(20, 16, 16);
-const markerMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+const markerGeo = new THREE.SphereGeometry(18, 16, 16);
+const markerMat = new THREE.MeshBasicMaterial({
+	color: 0xff3333,
+	transparent: true
+});
 
-function getMarker(id) {
-	if (!players.has(id)) {
-		const mesh = new THREE.Mesh(markerGeo, markerMat.clone());
-		scene.add(mesh);
-		players.set(id, { mesh, fade: 1 });
-	}
-	return players.get(id);
-}
-
-/* =========================
+/* ======================
    FETCH PLAYERS
-========================= */
+====================== */
 
 async function updatePlayers() {
 	const data = await fetch("/map").then(r => r.json());
-
-	const alive = new Set();
+	const aliveIds = new Set();
 
 	for (const p of data) {
-		alive.add(p.userId);
-		const pl = getMarker(p.userId);
-		pl.mesh.position.set(p.x, 10, p.z);
+		aliveIds.add(p.userId);
+
+		let pl;
+		if (!players.has(p.userId)) {
+			const mesh = new THREE.Mesh(markerGeo, markerMat.clone());
+			scene.add(mesh);
+			pl = {
+				mesh,
+				fade: 1,
+				lastPos: new THREE.Vector3(),
+				alive: true
+			};
+			players.set(p.userId, pl);
+		} else {
+			pl = players.get(p.userId);
+		}
+
+		pl.mesh.position.set(p.x, 15, p.z);
+		pl.lastPos.copy(pl.mesh.position);
 		pl.fade = 1;
+		pl.alive = true;
 	}
 
 	for (const [id, pl] of players) {
-		if (!alive.has(id)) pl.fade -= 0.02;
-		if (pl.fade <= 0) {
-			scene.remove(pl.mesh);
-			players.delete(id);
-		} else {
-			pl.mesh.material.opacity = pl.fade;
-			pl.mesh.material.transparent = true;
+		if (!aliveIds.has(id)) {
+			pl.alive = false;
+			pl.fade -= 0.02;
+
+			if (pl.mesh) {
+				pl.mesh.material.opacity = pl.fade;
+				if (pl.fade <= 0) {
+					scene.remove(pl.mesh);
+					pl.mesh = null;
+				}
+			}
 		}
 	}
 }
 
 setInterval(updatePlayers, 1000);
 
-/* =========================
+/* ======================
    VOLUMETRIC SHADER
-========================= */
+====================== */
 
 const VolumetricShader = {
 	uniforms: {
@@ -105,9 +163,17 @@ const VolumetricShader = {
 		cameraNear: { value: camera.near },
 		cameraFar: { value: camera.far },
 		time: { value: 0 },
+
 		uPlayers: { value: Array.from({ length: MAX_PLAYERS }, () => new THREE.Vector3()) },
-		uPlayerCount: { value: 0 }
+		uPlayerCount: { value: 0 },
+
+		uGhosts: { value: Array.from({ length: MAX_PLAYERS }, () => new THREE.Vector3()) },
+		uGhostCount: { value: 0 },
+
+		uScanRadius: { value: 0 },
+		uScanWidth: { value: 120.0 }
 	},
+
 	vertexShader: `
 		varying vec2 vUv;
 		void main() {
@@ -115,15 +181,25 @@ const VolumetricShader = {
 			gl_Position = vec4(position.xy, 0.0, 1.0);
 		}
 	`,
+
 	fragmentShader: `
 		#include <packing>
+
 		uniform sampler2D tDiffuse;
 		uniform sampler2D tDepth;
 		uniform float cameraNear;
 		uniform float cameraFar;
 		uniform float time;
+
 		uniform vec3 uPlayers[32];
 		uniform int uPlayerCount;
+
+		uniform vec3 uGhosts[32];
+		uniform int uGhostCount;
+
+		uniform float uScanRadius;
+		uniform float uScanWidth;
+
 		varying vec2 vUv;
 
 		float readDepth(vec2 uv) {
@@ -131,60 +207,124 @@ const VolumetricShader = {
 			return perspectiveDepthToViewZ(z, cameraNear, cameraFar);
 		}
 
+		float aliveGlow(vec3 p) {
+			float g = 0.0;
+			for (int i = 0; i < 32; i++) {
+				if (i >= uPlayerCount) break;
+				g += exp(-length(p - uPlayers[i]) * 0.03);
+			}
+			return g;
+		}
+
+		float ghostGlow(vec3 p) {
+			float g = 0.0;
+			for (int i = 0; i < 32; i++) {
+				if (i >= uGhostCount) break;
+
+				float d = length(p - uGhosts[i]);
+				float ring = abs(length(p.xz) - uScanRadius);
+				float scan = exp(-ring / uScanWidth);
+
+				g += exp(-d * 0.04) * scan * 2.5;
+			}
+			return g;
+		}
+
 		vec3 raymarch(vec3 ro, vec3 rd, float maxT) {
 			vec3 col = vec3(0.0);
 			float t = 0.0;
-			for (int i = 0; i < 64; i++) {
+
+			for (int i = 0; i < 80; i++) {
 				if (t > maxT) break;
+
 				vec3 p = ro + rd * t;
+
 				float fog = exp(-length(p.xz) * 0.002);
-				col += vec3(0.3, 0.5, 1.0) * fog * 0.03;
-				t += 40.0;
+				float alive = aliveGlow(p);
+				float ghost = ghostGlow(p);
+
+				float ring = abs(length(p.xz) - uScanRadius);
+				float scan = exp(-ring / uScanWidth);
+
+				col += (
+					vec3(0.2, 0.4, 0.8) * fog +
+					vec3(0.6, 0.9, 1.0) * alive +
+					vec3(1.0, 0.3, 0.3) * ghost +
+					vec3(1.0, 0.2, 0.2) * scan * 2.0
+				) * 0.025;
+
+				t += 35.0;
 			}
 			return col;
 		}
 
 		void main() {
 			float depth = -readDepth(vUv);
-			vec3 ro = vec3(0.0, 800.0, 0.0);
-			vec3 rd = normalize(vec3(vUv - 0.5, -1.0));
-			vec3 fog = raymarch(ro, rd, depth);
 
+			vec3 ro = vec3(0.0, 900.0, 0.0);
+			vec3 rd = normalize(vec3(vUv - 0.5, -1.0));
+
+			vec3 fog = raymarch(ro, rd, depth);
 			vec3 base = texture2D(tDiffuse, vUv).rgb;
+
 			gl_FragColor = vec4(base + fog, 1.0);
 		}
 	`
 };
 
-/* =========================
-   COMPOSER
-========================= */
+/* ======================
+   POST PROCESS
+====================== */
 
 const composer = new EffectComposer(renderer);
-const renderPass = new RenderPass(scene, camera);
-composer.addPass(renderPass);
+composer.addPass(new RenderPass(scene, camera));
 
 const volPass = new ShaderPass(VolumetricShader);
 volPass.renderToScreen = true;
 composer.addPass(volPass);
 
-/* =========================
+/* ======================
    ANIMATE
-========================= */
+====================== */
 
 function animate(t) {
 	requestAnimationFrame(animate);
-	volPass.uniforms.time.value = t * 0.001;
 
-	let i = 0;
-	for (const p of players.values()) {
-		if (i >= MAX_PLAYERS) break;
-		volPass.uniforms.uPlayers.value[i].copy(p.mesh.position);
-		i++;
+	volPass.uniforms.time.value = t * 0.001;
+	volPass.uniforms.uScanRadius.value =
+		(t * 0.001 * SCAN_SPEED) % SCAN_MAX;
+
+	let alive = 0;
+	let ghosts = 0;
+
+	for (const pl of players.values()) {
+		if (pl.alive && alive < MAX_PLAYERS) {
+			volPass.uniforms.uPlayers.value[alive++].copy(pl.lastPos);
+		}
+		if (!pl.alive && ghosts < MAX_PLAYERS) {
+			volPass.uniforms.uGhosts.value[ghosts++].copy(pl.lastPos);
+		}
 	}
-	volPass.uniforms.uPlayerCount.value = i;
+
+	volPass.uniforms.uPlayerCount.value = alive;
+	volPass.uniforms.uGhostCount.value = ghosts;
 
 	composer.render();
 }
 
 animate();
+
+/* ======================
+   RESIZE
+====================== */
+
+addEventListener("resize", () => {
+	camera.aspect = innerWidth / innerHeight;
+	camera.updateProjectionMatrix();
+	renderer.setSize(innerWidth, innerHeight);
+	composer.setSize(innerWidth, innerHeight);
+});
+</script>
+
+</body>
+</html>
