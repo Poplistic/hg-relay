@@ -2,18 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Digital Arena Shader</title>
+<title>Hunger Games Digital Arena</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 
 <style>
-	html, body {
+	body {
 		margin: 0;
-		padding: 0;
 		overflow: hidden;
-		background: black;
-	}
-	canvas {
-		display: block;
+		background: radial-gradient(#050505, #000);
 	}
 </style>
 
@@ -30,48 +26,62 @@
 
 <script type="module">
 import * as THREE from "three";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 
 /* ======================
    RENDERER
 ====================== */
 
-const renderer = new THREE.WebGLRenderer({
-	antialias: true,
-	powerPreference: "high-performance"
-});
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
 /* ======================
    SCENE / CAMERA
 ====================== */
 
-const scene = new THREE.Scene();
-const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const scene = new THREE.Scene(); // ❌ no fog
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000);
+camera.position.set(0, 900, 1400);
 
 /* ======================
-   SHADER MATERIAL
+   CONTROLS
 ====================== */
 
-const material = new THREE.ShaderMaterial({
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 400;
+controls.maxDistance = 3000;
+controls.maxPolarAngle = Math.PI / 2.1;
+
+/* ======================
+   DIGITAL ARENA SHADER
+====================== */
+
+const ArenaMaterial = new THREE.ShaderMaterial({
 	uniforms: {
-		uTime: { value: 0 },
-		uResolution: { value: new THREE.Vector2(innerWidth, innerHeight) }
+		uTime: { value: 0 }
 	},
 	vertexShader: `
+		varying vec3 vPos;
 		void main() {
-			gl_Position = vec4(position, 1.0);
+			vPos = position;
+			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 		}
 	`,
 	fragmentShader: `
 		uniform float uTime;
-		uniform vec2 uResolution;
+		varying vec3 vPos;
 
 		#define PI 3.141592
 		#define TAU (PI*2.0)
 
-		float rand(vec2 n) { 
+		float rand(vec2 n) {
 			return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453);
 		}
 
@@ -79,112 +89,79 @@ const material = new THREE.ShaderMaterial({
 			vec2 ip = floor(p);
 			vec2 u = fract(p);
 			u = u*u*(3.0-2.0*u);
-			float res = mix(
+			return mix(
 				mix(rand(ip),rand(ip+vec2(1.0,0.0)),u.x),
-				mix(rand(ip+vec2(0.0,1.0)),rand(ip+vec2(1.0,1.0)),u.x),u.y);
-			return res*res;
+				mix(rand(ip+vec2(0.0,1.0)),rand(ip+vec2(1.0,1.0)),u.x),
+				u.y
+			);
 		}
 
 		float fbm(vec2 p) {
 			float r = 0.0;
-			float amp = 1.0;
-			float freq = 1.0;
+			float a = 1.0;
 			for(int i = 0; i < 3; i++) {
-				r += amp * noise(freq*p);
-				amp *= 0.5;
-				freq *= 2.0;
+				r += a * noise(p);
+				p *= 2.0;
+				a *= 0.5;
 			}
 			return r;
 		}
 
-		mat2 rot(float th){
-			vec2 a = sin(vec2(1.5707963, 0.0) + th);
-			return mat2(a, -a.y, a.x);
-		}
-
-		float animHeight(vec2 p) {
-			float t = mod(uTime, 7.0);
-			return fbm(p * 0.3 + t * 0.5);
-		}
-
-		float sdBox(vec3 p, vec3 b) {
-			vec3 d = abs(p) - b;
-			return length(max(d,0.0));
-		}
-
-		float map(vec3 p) {
-			float bd = length(p.xz) - 5.0;
-			if (bd > 0.1) return bd;
-			vec2 id = floor(p.xz / 0.2);
-			float h = animHeight(id * 0.2) * 0.5;
-			p.y -= h;
-			return sdBox(p, vec3(0.03, h, 0.03));
-		}
-
-		vec2 trace(vec3 ro, vec3 rd) {
-			float t = 0.0;
-			for(int i = 0; i < 128; i++) {
-				vec3 pos = ro + rd * t;
-				float d = map(pos);
-				if (d < 0.002 || t > 100.0) break;
-				t += d;
-			}
-			return vec2(t);
-		}
-
 		void main() {
-			vec2 fragCoord = gl_FragCoord.xy;
-			vec2 p = (fragCoord * 2.0 - uResolution) / min(uResolution.x, uResolution.y);
+			vec2 uv = vPos.xz * 0.002;
 
-			float t = uTime * 0.1;
-			vec3 ro = vec3(cos(t)*10.0, 5.5, sin(t)*10.0);
-			vec3 ta = vec3(0.0, 1.0, 0.0);
+			float grid = abs(fract(uv.x * 20.0) - 0.5)
+					   + abs(fract(uv.y * 20.0) - 0.5);
 
-			vec3 cw = normalize(ta - ro);
-			vec3 cu = normalize(cross(cw, vec3(0.0,1.0,0.0)));
-			vec3 cv = cross(cu, cw);
-			vec3 rd = normalize(p.x*cu + p.y*cv + 2.5*cw);
+			float scan = sin((uv.y + uTime * 0.3) * 40.0) * 0.08;
+			float flicker = fbm(uv * 4.0 + uTime) * 0.15;
 
-			vec2 tr = trace(ro, rd);
-			float glow = pow(max(0.0, 1.0 - tr.x * 0.02), 4.0);
+			vec3 base = vec3(0.1, 0.35, 0.6);
+			vec3 col = base + grid * 0.25 + scan + flicker;
 
-			vec3 col = vec3(0.2, 0.5, 0.8) * glow * 4.0;
-			col = pow(col, vec3(1.0/2.2));
+			// height glow
+			col += smoothstep(0.0, 400.0, vPos.y) * vec3(0.2, 0.4, 0.6);
 
 			gl_FragColor = vec4(col, 1.0);
 		}
-	`
+	`,
+	side: THREE.DoubleSide
 });
 
 /* ======================
-   FULLSCREEN QUAD
+   LOAD ARENA OBJ
 ====================== */
 
-const quad = new THREE.Mesh(
-	new THREE.PlaneGeometry(2, 2),
-	material
-);
-quad.frustumCulled = false;
-scene.add(quad);
+const loader = new OBJLoader();
+loader.load("./arena.obj", obj => {
+	obj.traverse(m => {
+		if (!m.isMesh) return;
+
+		m.material = ArenaMaterial;
+		m.frustumCulled = true;
+	});
+	scene.add(obj);
+});
 
 /* ======================
    ANIMATE
 ====================== */
 
 function animate() {
-	material.uniforms.uTime.value = performance.now() * 0.001;
+	ArenaMaterial.uniforms.uTime.value = performance.now() * 0.001;
+	controls.update();
 	renderer.render(scene, camera);
-	requestAnimationFrame(animate);
 }
-animate();
+renderer.setAnimationLoop(animate);
 
 /* ======================
    RESIZE
 ====================== */
 
 window.addEventListener("resize", () => {
+	camera.aspect = innerWidth / innerHeight;
+	camera.updateProjectionMatrix();
 	renderer.setSize(innerWidth, innerHeight);
-	material.uniforms.uResolution.value.set(innerWidth, innerHeight);
 });
 </script>
 
