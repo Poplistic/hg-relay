@@ -1,41 +1,14 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Hunger Games Arena – Volumetric</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js";
+import { EffectComposer } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/postprocessing/RenderPass.js";
+import { ShaderPass } from "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/postprocessing/ShaderPass.js";
 
-<style>
-	body { margin: 0; overflow: hidden; background: black; }
-	.label {
-		position: absolute;
-		color: #fff;
-		font-size: 12px;
-		pointer-events: none;
-		transform: translate(-50%, -50%);
-		text-shadow: 0 0 6px red;
-	}
-</style>
+const MAX_PLAYERS = 32;
+const ARENA_RADIUS = 3000;
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-  }
-}
-</script>
-</head>
-
-<body>
-
-<script type="module">
-import * as THREE from "three";
-import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
-
-/* ======================
-   RENDERER
-====================== */
+/* =========================
+   SCENE
+========================= */
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -43,205 +16,175 @@ renderer.setPixelRatio(devicePixelRatio);
 renderer.autoClear = false;
 document.body.appendChild(renderer.domElement);
 
-/* ======================
-   SCENE / CAMERA
-====================== */
-
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000);
-camera.position.set(0, 900, 1400);
+scene.background = new THREE.Color(0x000000);
 
-/* ======================
-   CONTROLS
-====================== */
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 1, 10000);
+camera.position.set(2000, 1800, 2000);
+camera.lookAt(0, 0, 0);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
+/* =========================
+   ARENA (placeholder mesh)
+========================= */
 
-/* ======================
-   LIGHTING
-====================== */
+const arena = new THREE.Mesh(
+	new THREE.CylinderGeometry(ARENA_RADIUS, ARENA_RADIUS, 200, 128, 1, true),
+	new THREE.MeshStandardMaterial({
+		color: 0x111111,
+		roughness: 1,
+		metalness: 0
+	})
+);
+arena.position.y = -100;
+scene.add(arena);
 
-scene.add(new THREE.AmbientLight(0x555555));
-const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-sun.position.set(800, 1500, 600);
-scene.add(sun);
+const light = new THREE.DirectionalLight(0xffffff, 0.8);
+light.position.set(300, 800, 200);
+scene.add(light);
 
-/* ======================
-   ARENA
-====================== */
+/* =========================
+   PLAYER STATE
+========================= */
 
-new OBJLoader().load("./arena.obj", obj => {
-	obj.traverse(m => {
-		if (m.isMesh) {
-			m.material = new THREE.MeshStandardMaterial({
-				color: 0x1a1a1a,
-				roughness: 0.9
-			});
-		}
-	});
-	scene.add(obj);
-});
+const players = new Map(); // id → { pos, fade }
 
-/* ======================
-   PLAYER MARKERS (REAL DATA)
-====================== */
+/* =========================
+   PLAYER MARKERS
+========================= */
 
-const markers = new Map();
-const MAX_PLAYERS = 32;
-const playerUniforms = Array(MAX_PLAYERS).fill().map(() => new THREE.Vector3());
+const markerGeo = new THREE.SphereGeometry(20, 16, 16);
+const markerMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+
+function getMarker(id) {
+	if (!players.has(id)) {
+		const mesh = new THREE.Mesh(markerGeo, markerMat.clone());
+		scene.add(mesh);
+		players.set(id, { mesh, fade: 1 });
+	}
+	return players.get(id);
+}
+
+/* =========================
+   FETCH PLAYERS
+========================= */
 
 async function updatePlayers() {
-	const res = await fetch("/map");
-	const players = await res.json();
+	const data = await fetch("/map").then(r => r.json());
 
-	players.forEach((p, i) => {
-		if (!markers.has(p.userId)) {
-			const m = new THREE.Mesh(
-				new THREE.SphereGeometry(10, 16, 16),
-				new THREE.MeshBasicMaterial({ color: 0xff3333 })
-			);
-			scene.add(m);
-			markers.set(p.userId, m);
+	const alive = new Set();
+
+	for (const p of data) {
+		alive.add(p.userId);
+		const pl = getMarker(p.userId);
+		pl.mesh.position.set(p.x, 10, p.z);
+		pl.fade = 1;
+	}
+
+	for (const [id, pl] of players) {
+		if (!alive.has(id)) pl.fade -= 0.02;
+		if (pl.fade <= 0) {
+			scene.remove(pl.mesh);
+			players.delete(id);
+		} else {
+			pl.mesh.material.opacity = pl.fade;
+			pl.mesh.material.transparent = true;
 		}
-
-		const m = markers.get(p.userId);
-		m.position.set(p.x, 15, p.z);
-
-		if (i < MAX_PLAYERS) {
-			playerUniforms[i].set(p.x, 0.0, p.z);
-		}
-	});
+	}
 }
-setInterval(updatePlayers, 250);
 
-/* ======================
-   PROJECTION SHADER (PLAYERS INJECTED)
-====================== */
+setInterval(updatePlayers, 1000);
 
-const projectionMaterial = new THREE.ShaderMaterial({
+/* =========================
+   VOLUMETRIC SHADER
+========================= */
+
+const VolumetricShader = {
 	uniforms: {
-		uTime: { value: 0 },
-		uPlayers: { value: playerUniforms },
+		tDiffuse: { value: null },
+		tDepth: { value: null },
+		cameraNear: { value: camera.near },
+		cameraFar: { value: camera.far },
+		time: { value: 0 },
+		uPlayers: { value: Array.from({ length: MAX_PLAYERS }, () => new THREE.Vector3()) },
 		uPlayerCount: { value: 0 }
 	},
 	vertexShader: `
+		varying vec2 vUv;
 		void main() {
-			gl_Position = vec4(position, 1.0);
+			vUv = uv;
+			gl_Position = vec4(position.xy, 0.0, 1.0);
 		}
 	`,
 	fragmentShader: `
-		uniform float uTime;
+		#include <packing>
+		uniform sampler2D tDiffuse;
+		uniform sampler2D tDepth;
+		uniform float cameraNear;
+		uniform float cameraFar;
+		uniform float time;
 		uniform vec3 uPlayers[32];
 		uniform int uPlayerCount;
+		varying vec2 vUv;
 
-		float beacon(vec2 uv, vec2 p) {
-			float d = length(uv - p);
-			return exp(-d * 40.0);
+		float readDepth(vec2 uv) {
+			float z = texture2D(tDepth, uv).x;
+			return perspectiveDepthToViewZ(z, cameraNear, cameraFar);
 		}
 
-		void main() {
-			vec2 uv = gl_FragCoord.xy / vec2(${innerWidth.toFixed(1)}, ${innerHeight.toFixed(1)});
+		vec3 raymarch(vec3 ro, vec3 rd, float maxT) {
 			vec3 col = vec3(0.0);
-
-			for (int i = 0; i < 32; i++) {
-				vec2 p = uPlayers[i].xz * 0.0005 + 0.5;
-				col += vec3(0.8, 0.2, 0.2) * beacon(uv, p);
-			}
-
-			col *= 0.6;
-			gl_FragColor = vec4(col, 0.6);
-		}
-	`,
-	transparent: true,
-	depthWrite: false
-});
-
-/* ======================
-   TRUE VOLUMETRIC LIGHT RAYS
-====================== */
-
-const volumetricMaterial = new THREE.ShaderMaterial({
-	uniforms: {
-		uTime: { value: 0 }
-	},
-	vertexShader: `
-		void main() {
-			gl_Position = vec4(position, 1.0);
-		}
-	`,
-	fragmentShader: `
-		uniform float uTime;
-
-		void main() {
-			vec2 uv = gl_FragCoord.xy / vec2(${innerWidth.toFixed(1)}, ${innerHeight.toFixed(1)});
-			vec2 p = uv * 2.0 - 1.0;
-
 			float t = 0.0;
-			float density = 0.0;
-
-			for (int i = 0; i < 48; i++) {
-				vec3 pos = vec3(p * t, t * 2.0);
-				float d = length(pos.xz);
-				density += exp(-d * 2.0) * 0.02;
-				t += 0.05;
+			for (int i = 0; i < 64; i++) {
+				if (t > maxT) break;
+				vec3 p = ro + rd * t;
+				float fog = exp(-length(p.xz) * 0.002);
+				col += vec3(0.3, 0.5, 1.0) * fog * 0.03;
+				t += 40.0;
 			}
-
-			vec3 col = vec3(0.2, 0.5, 1.0) * density;
-			gl_FragColor = vec4(col, density);
+			return col;
 		}
-	`,
-	transparent: true,
-	blending: THREE.AdditiveBlending,
-	depthWrite: false
-});
 
-/* ======================
-   OVERLAY SCENES
-====================== */
+		void main() {
+			float depth = -readDepth(vUv);
+			vec3 ro = vec3(0.0, 800.0, 0.0);
+			vec3 rd = normalize(vec3(vUv - 0.5, -1.0));
+			vec3 fog = raymarch(ro, rd, depth);
 
-const overlayCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+			vec3 base = texture2D(tDiffuse, vUv).rgb;
+			gl_FragColor = vec4(base + fog, 1.0);
+		}
+	`
+};
 
-const projectionScene = new THREE.Scene();
-projectionScene.add(new THREE.Mesh(
-	new THREE.PlaneGeometry(2,2),
-	projectionMaterial
-));
+/* =========================
+   COMPOSER
+========================= */
 
-const volumetricScene = new THREE.Scene();
-volumetricScene.add(new THREE.Mesh(
-	new THREE.PlaneGeometry(2,2),
-	volumetricMaterial
-));
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, camera);
+composer.addPass(renderPass);
 
-/* ======================
+const volPass = new ShaderPass(VolumetricShader);
+volPass.renderToScreen = true;
+composer.addPass(volPass);
+
+/* =========================
    ANIMATE
-====================== */
+========================= */
 
-function animate() {
-	const t = performance.now() * 0.001;
-	projectionMaterial.uniforms.uTime.value = t;
-	volumetricMaterial.uniforms.uTime.value = t;
+function animate(t) {
+	requestAnimationFrame(animate);
+	volPass.uniforms.time.value = t * 0.001;
 
-	controls.update();
+	let i = 0;
+	for (const p of players.values()) {
+		if (i >= MAX_PLAYERS) break;
+		volPass.uniforms.uPlayers.value[i].copy(p.mesh.position);
+		i++;
+	}
+	volPass.uniforms.uPlayerCount.value = i;
 
-	renderer.clear();
-	renderer.render(scene, camera);                 // arena + markers
-	renderer.render(projectionScene, overlayCam);  // projection
-	renderer.render(volumetricScene, overlayCam);  // volumetric rays
+	composer.render();
 }
-renderer.setAnimationLoop(animate);
 
-/* ======================
-   RESIZE
-====================== */
-
-window.addEventListener("resize", () => {
-	camera.aspect = innerWidth / innerHeight;
-	camera.updateProjectionMatrix();
-	renderer.setSize(innerWidth, innerHeight);
-});
-</script>
-
-</body>
-</html>
+animate();
