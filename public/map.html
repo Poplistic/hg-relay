@@ -19,8 +19,8 @@
 		text-align: center;
 		pointer-events: none;
 		text-shadow:
-			0 0 5px #ff4444,
-			0 0 10px #ff0000;
+			0 0 6px #ff4444,
+			0 0 12px #ff0000;
 		transform: translate(-50%, -50%);
 	}
 </style>
@@ -30,16 +30,22 @@
 
 <script type="module">
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 
 /* ======================
-   SCENE SETUP
+   SCENE
 ====================== */
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x000000, 800, 3000);
+scene.fog = new THREE.Fog(0x000000, 800, 4000);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 6000);
-camera.position.set(0, 900, 1200);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000);
+camera.position.set(0, 900, 1400);
+
+/* ======================
+   RENDERER
+====================== */
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -47,60 +53,49 @@ renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
 /* ======================
+   CONTROLS
+====================== */
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.screenSpacePanning = true;
+controls.minDistance = 400;
+controls.maxDistance = 3000;
+controls.maxPolarAngle = Math.PI / 2.1;
+
+/* ======================
    LIGHTING
 ====================== */
 
-scene.add(new THREE.AmbientLight(0x555555));
+scene.add(new THREE.AmbientLight(0x666666));
 
-const sun = new THREE.DirectionalLight(0xffeedd, 1.2);
-sun.position.set(800, 1200, 500);
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(800, 1500, 600);
 scene.add(sun);
 
 /* ======================
-   SKY DOME
+   ARENA OBJ MAP
 ====================== */
 
-const sky = new THREE.Mesh(
-	new THREE.SphereGeometry(5000, 32, 32),
-	new THREE.MeshBasicMaterial({
-		color: 0x050505,
-		side: THREE.BackSide
-	})
-);
-scene.add(sky);
+const loader = new OBJLoader();
+loader.load("/arena.obj", obj => {
+	obj.traverse(m => {
+		if (m.isMesh) {
+			m.material = new THREE.MeshStandardMaterial({
+				color: 0x2a2a2a,
+				roughness: 0.8,
+				metalness: 0.2
+			});
+			m.castShadow = true;
+			m.receiveShadow = true;
+		}
+	});
 
-/* ======================
-   ARENA FLOOR
-====================== */
-
-const floor = new THREE.Mesh(
-	new THREE.PlaneGeometry(3000, 3000, 50, 50),
-	new THREE.MeshStandardMaterial({
-		color: 0x1c1c1c,
-		metalness: 0.2,
-		roughness: 0.8
-	})
-);
-floor.rotation.x = -Math.PI / 2;
-scene.add(floor);
-
-/* Grid overlay */
-const grid = new THREE.GridHelper(3000, 60, 0x333333, 0x222222);
-scene.add(grid);
-
-/* ======================
-   COMPASS RING
-====================== */
-
-const compass = new THREE.Mesh(
-	new THREE.RingGeometry(1400, 1450, 64),
-	new THREE.MeshBasicMaterial({
-		color: 0x444444,
-		side: THREE.DoubleSide
-	})
-);
-compass.rotation.x = -Math.PI / 2;
-scene.add(compass);
+	obj.scale.set(20, 20, 20); // adjust if needed
+	obj.position.y = 0;
+	scene.add(obj);
+});
 
 /* ======================
    PLAYER MARKERS
@@ -111,26 +106,24 @@ const markers = new Map();
 function createMarker(player) {
 	const group = new THREE.Group();
 
-	/* Glow */
-	const glow = new THREE.Mesh(
+	// Glow core
+	const core = new THREE.Mesh(
 		new THREE.SphereGeometry(10, 16, 16),
-		new THREE.MeshBasicMaterial({ color: 0xff2222 })
+		new THREE.MeshBasicMaterial({ color: 0xff3333 })
+	);
+	group.add(core);
+
+	// Outer glow
+	const glow = new THREE.Mesh(
+		new THREE.SphereGeometry(18, 16, 16),
+		new THREE.MeshBasicMaterial({
+			color: 0xff0000,
+			transparent: true,
+			opacity: 0.35
+		})
 	);
 	group.add(glow);
 
-	/* Arrow */
-	const arrow = new THREE.Mesh(
-		new THREE.ConeGeometry(12, 40, 10),
-		new THREE.MeshStandardMaterial({
-			color: 0xff4444,
-			emissive: 0x550000
-		})
-	);
-	arrow.position.y = 30;
-	arrow.rotation.x = Math.PI;
-	group.add(arrow);
-
-	/* Label */
 	const label = document.createElement("div");
 	label.className = "label";
 	label.innerHTML = `<b>D${player.district}</b><br>${player.name}`;
@@ -141,7 +134,7 @@ function createMarker(player) {
 }
 
 /* ======================
-   UPDATE LOOP
+   UPDATE PLAYERS
 ====================== */
 
 async function updatePlayers() {
@@ -154,7 +147,6 @@ async function updatePlayers() {
 		const { group, label } = markers.get(p.userId);
 
 		group.position.set(p.x, 15, p.z);
-		group.rotation.y = THREE.MathUtils.degToRad(p.rotation);
 
 		const screenPos = group.position.clone().project(camera);
 		label.style.left = ((screenPos.x + 1) / 2 * innerWidth) + "px";
@@ -163,27 +155,23 @@ async function updatePlayers() {
 }
 
 /* ======================
-   CAMERA ORBIT
+   ANIMATION LOOP
 ====================== */
 
-let angle = 0;
 function animate() {
-	angle += 0.0008;
-	camera.position.x = Math.sin(angle) * 1200;
-	camera.position.z = Math.cos(angle) * 1200;
-	camera.lookAt(0, 0, 0);
+	controls.update();
 
-	/* Glow pulse */
+	// Glow pulse
+	const pulse = 1 + Math.sin(Date.now() * 0.004) * 0.25;
 	for (const m of markers.values()) {
-		const s = 1 + Math.sin(Date.now() * 0.004) * 0.2;
-		m.glow.scale.set(s, s, s);
+		m.glow.scale.set(pulse, pulse, pulse);
 	}
 
 	renderer.render(scene, camera);
 }
 
 /* ======================
-   EVENTS
+   RESIZE
 ====================== */
 
 window.addEventListener("resize", () => {
