@@ -4,12 +4,15 @@
 <meta charset="UTF-8">
 <title>Hunger Games Arena Map</title>
 
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
 <style>
 	body {
 		margin: 0;
 		overflow: hidden;
 		background: radial-gradient(#050505, #000);
 		font-family: Arial, sans-serif;
+		touch-action: none;
 	}
 
 	.label {
@@ -31,17 +34,40 @@
 			0 0 16px #ff0000;
 	}
 </style>
+
+<!-- ✅ IMPORT MAP (REQUIRED) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
 </head>
 
 <body>
 
 <script type="module">
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import * as THREE from "three";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 
 /* ======================
-   SCENE
+   RENDERER
+====================== */
+
+const renderer = new THREE.WebGLRenderer({
+	antialias: true,
+	powerPreference: "high-performance"
+});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = false;
+document.body.appendChild(renderer.domElement);
+
+/* ======================
+   SCENE / CAMERA
 ====================== */
 
 const scene = new THREE.Scene();
@@ -51,21 +77,22 @@ const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000
 camera.position.set(0, 900, 1400);
 
 /* ======================
-   RENDERER
-====================== */
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(devicePixelRatio);
-document.body.appendChild(renderer.domElement);
-
-/* ======================
-   CONTROLS
+   MOBILE-FRIENDLY CONTROLS
 ====================== */
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.screenSpacePanning = true;
+controls.dampingFactor = 0.08;
+
+controls.enablePan = true;
+controls.enableRotate = true;
+controls.enableZoom = true;
+
+controls.touches = {
+	ONE: THREE.TOUCH.ROTATE,
+	TWO: THREE.TOUCH.DOLLY_PAN
+};
+
 controls.minDistance = 400;
 controls.maxDistance = 3000;
 controls.maxPolarAngle = Math.PI / 2.1;
@@ -76,25 +103,41 @@ controls.maxPolarAngle = Math.PI / 2.1;
 
 scene.add(new THREE.AmbientLight(0x666666));
 
-const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
 sun.position.set(800, 1500, 600);
 scene.add(sun);
 
 /* ======================
-   ARENA OBJ
+   OPTIMIZED OBJ LOADING
 ====================== */
 
-new OBJLoader().load("./arena.obj", obj => {
+const manager = new THREE.LoadingManager();
+
+manager.onLoad = () => {
+	console.log("Arena loaded");
+};
+
+const objLoader = new OBJLoader(manager);
+
+objLoader.load("./arena.obj", obj => {
 	obj.traverse(m => {
-		if (m.isMesh) {
-			m.material = new THREE.MeshStandardMaterial({
-				color: 0x2a2a2a,
-				roughness: 0.8,
-				metalness: 0.2
-			});
-		}
+		if (!m.isMesh) return;
+
+		m.castShadow = false;
+		m.receiveShadow = false;
+		m.frustumCulled = true;
+
+		m.material = new THREE.MeshStandardMaterial({
+			color: 0x2a2a2a,
+			roughness: 0.85,
+			metalness: 0.15
+		});
 	});
+
 	obj.scale.set(20, 20, 20);
+	obj.matrixAutoUpdate = false;
+	obj.updateMatrix();
+
 	scene.add(obj);
 });
 
@@ -104,20 +147,17 @@ new OBJLoader().load("./arena.obj", obj => {
 
 const markers = new Map();
 const clickable = [];
-
 let selected = null;
 
 function createMarker(player) {
 	const group = new THREE.Group();
 
-	/* Core */
 	const core = new THREE.Mesh(
 		new THREE.SphereGeometry(10, 16, 16),
 		new THREE.MeshBasicMaterial({ color: 0xff3333 })
 	);
 	group.add(core);
 
-	/* Glow */
 	const glow = new THREE.Mesh(
 		new THREE.SphereGeometry(18, 16, 16),
 		new THREE.MeshBasicMaterial({
@@ -128,7 +168,6 @@ function createMarker(player) {
 	);
 	group.add(glow);
 
-	/* Selection ring */
 	const ring = new THREE.Mesh(
 		new THREE.RingGeometry(22, 28, 32),
 		new THREE.MeshBasicMaterial({
@@ -154,41 +193,37 @@ function createMarker(player) {
 }
 
 /* ======================
-   SELECTION LOGIC
+   SELECTION
 ====================== */
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-function selectMarker(userId) {
-	if (selected && markers.has(selected)) {
-		const prev = markers.get(selected);
-		prev.ring.material.opacity = 0;
-		prev.label.classList.remove("selected");
-	}
-
-	selected = userId;
-
-	if (markers.has(userId)) {
-		const m = markers.get(userId);
-		m.ring.material.opacity = 0.8;
-		m.label.classList.add("selected");
-	}
-}
-
-window.addEventListener("click", e => {
+window.addEventListener("pointerdown", e => {
 	mouse.x = (e.clientX / innerWidth) * 2 - 1;
 	mouse.y = -(e.clientY / innerHeight) * 2 + 1;
 
 	raycaster.setFromCamera(mouse, camera);
 	const hits = raycaster.intersectObjects(clickable);
 
-	if (hits.length) {
-		selectMarker(hits[0].object.parent.userData.userId);
-	} else {
-		selectMarker(null);
-	}
+	selectMarker(hits.length ? hits[0].object.parent.userData.userId : null);
 });
+
+function selectMarker(id) {
+	if (selected && markers.has(selected)) {
+		const m = markers.get(selected);
+		m.ring.material.opacity = 0;
+		m.label.classList.remove("selected");
+	}
+
+	selected = id;
+
+	if (markers.has(id)) {
+		const m = markers.get(id);
+		m.ring.material.opacity = 0.8;
+		m.label.classList.add("selected");
+	}
+}
 
 /* ======================
    UPDATE PLAYERS
