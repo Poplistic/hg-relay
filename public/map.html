@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Hunger Games Arena Map</title>
+<style>
+	body { margin: 0; overflow: hidden; background: black; }
+	.label {
+		position: absolute;
+		color: white;
+		font-family: Arial;
+		font-size: 12px;
+		text-align: center;
+		pointer-events: none;
+	}
+</style>
+</head>
+<body>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 5000);
+camera.position.set(0, 900, 900);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+/* ======================
+   FLOOR
+====================== */
+
+const floor = new THREE.Mesh(
+	new THREE.PlaneGeometry(3000, 3000),
+	new THREE.MeshBasicMaterial({ color: 0x222222 })
+);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+
+/* ======================
+   MARKERS
+====================== */
+
+const markers = new Map();
+
+function createMarker(player) {
+	const group = new THREE.Group();
+
+	const arrow = new THREE.Mesh(
+		new THREE.ConeGeometry(12, 40, 8),
+		new THREE.MeshBasicMaterial({ color: 0xff4444 })
+	);
+	arrow.rotation.x = Math.PI;
+	group.add(arrow);
+
+	const label = document.createElement("div");
+	label.className = "label";
+	label.innerHTML = `D${player.district}<br>${player.name}`;
+	document.body.appendChild(label);
+
+	scene.add(group);
+	markers.set(player.userId, { group, label });
+}
+
+/* ======================
+   UPDATE
+====================== */
+
+async function update() {
+	const res = await fetch("/map");
+	const players = await res.json();
+
+	for (const p of players) {
+		if (!markers.has(p.userId)) {
+			createMarker(p);
+		}
+
+		const { group, label } = markers.get(p.userId);
+
+		group.position.set(p.x, 20, p.z);
+		group.rotation.y = THREE.MathUtils.degToRad(p.rotation);
+
+		const screenPos = group.position.clone().project(camera);
+		label.style.left = ((screenPos.x + 1) / 2 * innerWidth) + "px";
+		label.style.top = ((-screenPos.y + 1) / 2 * innerHeight) + "px";
+	}
+}
+
+setInterval(update, 250);
+renderer.setAnimationLoop(() => renderer.render(scene, camera));
+</script>
+
+</body>
+</html>
