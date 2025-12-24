@@ -1,47 +1,109 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Hunger Games Arena Map</title>
+
 <style>
-	body { margin: 0; overflow: hidden; background: black; }
+	body {
+		margin: 0;
+		overflow: hidden;
+		background: radial-gradient(#050505, #000);
+		font-family: Arial, sans-serif;
+	}
+
 	.label {
 		position: absolute;
-		color: white;
-		font-family: Arial;
+		color: #fff;
 		font-size: 12px;
 		text-align: center;
 		pointer-events: none;
+		text-shadow:
+			0 0 5px #ff4444,
+			0 0 10px #ff0000;
+		transform: translate(-50%, -50%);
 	}
 </style>
 </head>
+
 <body>
 
 <script type="module">
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 
+/* ======================
+   SCENE SETUP
+====================== */
+
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 5000);
-camera.position.set(0, 900, 900);
-camera.lookAt(0, 0, 0);
+scene.fog = new THREE.Fog(0x000000, 800, 3000);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 6000);
+camera.position.set(0, 900, 1200);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
 /* ======================
-   FLOOR
+   LIGHTING
+====================== */
+
+scene.add(new THREE.AmbientLight(0x555555));
+
+const sun = new THREE.DirectionalLight(0xffeedd, 1.2);
+sun.position.set(800, 1200, 500);
+scene.add(sun);
+
+/* ======================
+   SKY DOME
+====================== */
+
+const sky = new THREE.Mesh(
+	new THREE.SphereGeometry(5000, 32, 32),
+	new THREE.MeshBasicMaterial({
+		color: 0x050505,
+		side: THREE.BackSide
+	})
+);
+scene.add(sky);
+
+/* ======================
+   ARENA FLOOR
 ====================== */
 
 const floor = new THREE.Mesh(
-	new THREE.PlaneGeometry(3000, 3000),
-	new THREE.MeshBasicMaterial({ color: 0x222222 })
+	new THREE.PlaneGeometry(3000, 3000, 50, 50),
+	new THREE.MeshStandardMaterial({
+		color: 0x1c1c1c,
+		metalness: 0.2,
+		roughness: 0.8
+	})
 );
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
+/* Grid overlay */
+const grid = new THREE.GridHelper(3000, 60, 0x333333, 0x222222);
+scene.add(grid);
+
 /* ======================
-   MARKERS
+   COMPASS RING
+====================== */
+
+const compass = new THREE.Mesh(
+	new THREE.RingGeometry(1400, 1450, 64),
+	new THREE.MeshBasicMaterial({
+		color: 0x444444,
+		side: THREE.DoubleSide
+	})
+);
+compass.rotation.x = -Math.PI / 2;
+scene.add(compass);
+
+/* ======================
+   PLAYER MARKERS
 ====================== */
 
 const markers = new Map();
@@ -49,38 +111,49 @@ const markers = new Map();
 function createMarker(player) {
 	const group = new THREE.Group();
 
-	const arrow = new THREE.Mesh(
-		new THREE.ConeGeometry(12, 40, 8),
-		new THREE.MeshBasicMaterial({ color: 0xff4444 })
+	/* Glow */
+	const glow = new THREE.Mesh(
+		new THREE.SphereGeometry(10, 16, 16),
+		new THREE.MeshBasicMaterial({ color: 0xff2222 })
 	);
+	group.add(glow);
+
+	/* Arrow */
+	const arrow = new THREE.Mesh(
+		new THREE.ConeGeometry(12, 40, 10),
+		new THREE.MeshStandardMaterial({
+			color: 0xff4444,
+			emissive: 0x550000
+		})
+	);
+	arrow.position.y = 30;
 	arrow.rotation.x = Math.PI;
 	group.add(arrow);
 
+	/* Label */
 	const label = document.createElement("div");
 	label.className = "label";
-	label.innerHTML = `D${player.district}<br>${player.name}`;
+	label.innerHTML = `<b>D${player.district}</b><br>${player.name}`;
 	document.body.appendChild(label);
 
 	scene.add(group);
-	markers.set(player.userId, { group, label });
+	markers.set(player.userId, { group, label, glow });
 }
 
 /* ======================
-   UPDATE
+   UPDATE LOOP
 ====================== */
 
-async function update() {
+async function updatePlayers() {
 	const res = await fetch("/map");
 	const players = await res.json();
 
 	for (const p of players) {
-		if (!markers.has(p.userId)) {
-			createMarker(p);
-		}
+		if (!markers.has(p.userId)) createMarker(p);
 
 		const { group, label } = markers.get(p.userId);
 
-		group.position.set(p.x, 20, p.z);
+		group.position.set(p.x, 15, p.z);
 		group.rotation.y = THREE.MathUtils.degToRad(p.rotation);
 
 		const screenPos = group.position.clone().project(camera);
@@ -89,8 +162,42 @@ async function update() {
 	}
 }
 
-setInterval(update, 250);
-renderer.setAnimationLoop(() => renderer.render(scene, camera));
+/* ======================
+   CAMERA ORBIT
+====================== */
+
+let angle = 0;
+function animate() {
+	angle += 0.0008;
+	camera.position.x = Math.sin(angle) * 1200;
+	camera.position.z = Math.cos(angle) * 1200;
+	camera.lookAt(0, 0, 0);
+
+	/* Glow pulse */
+	for (const m of markers.values()) {
+		const s = 1 + Math.sin(Date.now() * 0.004) * 0.2;
+		m.glow.scale.set(s, s, s);
+	}
+
+	renderer.render(scene, camera);
+}
+
+/* ======================
+   EVENTS
+====================== */
+
+window.addEventListener("resize", () => {
+	camera.aspect = innerWidth / innerHeight;
+	camera.updateProjectionMatrix();
+	renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ======================
+   START
+====================== */
+
+setInterval(updatePlayers, 250);
+renderer.setAnimationLoop(animate);
 </script>
 
 </body>
