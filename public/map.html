@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
+<meta charset="UTF-8">
 <title>HG Arena Map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
@@ -72,8 +72,7 @@ scene.add(sun);
    ARENA MESH
 ====================== */
 
-const loader = new OBJLoader();
-loader.load("./arena.obj", obj => {
+new OBJLoader().load("./arena.obj", obj => {
 	obj.traverse(m => {
 		if (!m.isMesh) return;
 		m.material = new THREE.MeshStandardMaterial({
@@ -134,8 +133,8 @@ async function updatePlayers() {
 		pl.alive = true;
 	}
 
-	for (const [id, pl] of players) {
-		if (!aliveIds.has(id)) {
+	for (const pl of players.values()) {
+		if (!aliveIds.has(pl.mesh?.uuid)) {
 			pl.alive = false;
 			pl.fade -= 0.02;
 
@@ -162,7 +161,6 @@ const VolumetricShader = {
 		tDepth: { value: null },
 		cameraNear: { value: camera.near },
 		cameraFar: { value: camera.far },
-		time: { value: 0 },
 
 		uPlayers: { value: Array.from({ length: MAX_PLAYERS }, () => new THREE.Vector3()) },
 		uPlayerCount: { value: 0 },
@@ -189,7 +187,6 @@ const VolumetricShader = {
 		uniform sampler2D tDepth;
 		uniform float cameraNear;
 		uniform float cameraFar;
-		uniform float time;
 
 		uniform vec3 uPlayers[32];
 		uniform int uPlayerCount;
@@ -243,14 +240,10 @@ const VolumetricShader = {
 				float alive = aliveGlow(p);
 				float ghost = ghostGlow(p);
 
-				float ring = abs(length(p.xz) - uScanRadius);
-				float scan = exp(-ring / uScanWidth);
-
 				col += (
 					vec3(0.2, 0.4, 0.8) * fog +
 					vec3(0.6, 0.9, 1.0) * alive +
-					vec3(1.0, 0.3, 0.3) * ghost +
-					vec3(1.0, 0.2, 0.2) * scan * 2.0
+					vec3(0.8, 0.9, 1.0) * ghost
 				) * 0.025;
 
 				t += 35.0;
@@ -290,7 +283,6 @@ composer.addPass(volPass);
 function animate(t) {
 	requestAnimationFrame(animate);
 
-	volPass.uniforms.time.value = t * 0.001;
 	volPass.uniforms.uScanRadius.value =
 		(t * 0.001 * SCAN_SPEED) % SCAN_MAX;
 
