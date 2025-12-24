@@ -1,6 +1,7 @@
 import express from "express";
-import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
 import {
 	Client,
 	GatewayIntentBits,
@@ -9,9 +10,26 @@ import {
 	Routes
 } from "discord.js";
 
+/* ======================
+   PATH SETUP (IMPORTANT)
+====================== */
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/* ======================
+   EXPRESS APP
+====================== */
+
 const app = express();
 app.use(express.json());
-app.use(express.static("public"));
+
+// ✅ ABSOLUTE static path (prevents Render serving wrong files)
+app.use(express.static(path.join(__dirname, "public")));
+
+/* ======================
+   ENV
+====================== */
 
 const {
 	SECRET,
@@ -35,6 +53,14 @@ app.post("/map", (req, res) => {
 
 app.get("/map", (req, res) => {
 	res.json(liveMapState);
+});
+
+/* ======================
+   ROOT ROUTE (OPTIONAL)
+====================== */
+
+app.get("/", (req, res) => {
+	res.sendFile(path.join(__dirname, "public", "map.html"));
 });
 
 /* ======================
