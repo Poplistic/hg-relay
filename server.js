@@ -1,6 +1,6 @@
 import express from "express";
-import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import {
 	Client,
 	GatewayIntentBits,
@@ -9,9 +9,16 @@ import {
 	Routes
 } from "discord.js";
 
-const app = express();
-app.use(express.json());
-app.use(express.static("public"));
+/* ======================
+   PATH FIX (ESM)
+====================== */
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/* ======================
+   ENV
+====================== */
 
 const {
 	SECRET,
@@ -21,20 +28,68 @@ const {
 	PORT = 10000
 } = process.env;
 
+if (!SECRET) throw new Error("SECRET missing");
+if (!DISCORD_TOKEN) throw new Error("DISCORD_TOKEN missing");
+if (!CLIENT_ID) throw new Error("CLIENT_ID missing");
+
 /* ======================
-   LIVE MAP STATE
+   EXPRESS
+====================== */
+
+const app = express();
+
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(path.join(__dirname, "public")));
+
+/* ======================
+   LIVE STATE
 ====================== */
 
 let liveMapState = [];
+let lightingState = {
+	clockTime: 12,
+	brightness: 2,
+	fogColor: [5, 9, 20],
+	fogDensity: 0.00035
+};
+
+/* ======================
+   MAP ENDPOINTS
+====================== */
 
 app.post("/map", (req, res) => {
 	if (req.body.secret !== SECRET) return res.sendStatus(403);
-	liveMapState = req.body.players || [];
+
+	liveMapState = Array.isArray(req.body.players)
+		? req.body.players
+		: [];
+
 	res.sendStatus(200);
 });
 
 app.get("/map", (req, res) => {
 	res.json(liveMapState);
+});
+
+/* ======================
+   LIGHTING ENDPOINTS
+====================== */
+
+app.post("/lighting", (req, res) => {
+	if (req.body.secret !== SECRET) return res.sendStatus(403);
+
+	if (req.body.lighting) {
+		lightingState = {
+			...lightingState,
+			...req.body.lighting
+		};
+	}
+
+	res.sendStatus(200);
+});
+
+app.get("/lighting", (req, res) => {
+	res.json(lightingState);
 });
 
 /* ======================
@@ -46,7 +101,10 @@ const client = new Client({
 });
 
 const commands = [
-	{ name: "map", description: "View live arena map" }
+	{
+		name: "map",
+		description: "View live arena map"
+	}
 ];
 
 async function registerCommands() {
@@ -60,6 +118,11 @@ async function registerCommands() {
 	);
 }
 
+client.once(Events.ClientReady, async bot => {
+	console.log(`🤖 Logged in as ${bot.user.tag}`);
+	await registerCommands();
+});
+
 client.on(Events.InteractionCreate, async interaction => {
 	if (!interaction.isChatInputCommand()) return;
 
@@ -68,22 +131,17 @@ client.on(Events.InteractionCreate, async interaction => {
 			embeds: [{
 				title: "🗺️ Live Arena Map",
 				description: "[Open 3D Map](https://hg-relay.onrender.com/map.html)",
-				color: 0xff0000
+				color: 0x00b3ff
 			}]
 		});
 	}
 });
 
-client.once(Events.ClientReady, async bot => {
-	console.log(`🤖 Logged in as ${bot.user.tag}`);
-	await registerCommands();
-});
+/* ======================
+   START
+====================== */
 
 await client.login(DISCORD_TOKEN);
-
-/* ======================
-   START SERVER
-====================== */
 
 app.listen(PORT, () => {
 	console.log(`🚀 HG Relay running on port ${PORT}`);
