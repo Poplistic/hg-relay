@@ -33,6 +33,20 @@
 		border-radius:4px;
 		padding:4px;
 	}
+
+	#input {
+		width:100%;
+		box-sizing:border-box;
+		display:block;
+	}
+
+	#log div {
+		opacity:1;
+		transition:opacity 1.2s ease;
+	}
+	#log.fade div {
+		opacity:0;
+	}
 </style>
 
 <script type="importmap">
@@ -100,8 +114,6 @@ sun.shadow.camera.top = 6000;
 sun.shadow.camera.bottom = -6000;
 scene.add(sun);
 
-scene.add(new THREE.DirectionalLight(0x88aaff, 0.4));
-
 /* ======================
    GROUPS
 ====================== */
@@ -131,15 +143,6 @@ loader.load("arena.obj", obj=>{
 /* ======================
    UI
 ====================== */
-const tributeUI = ui("10px","10px");
-const killUI = ui("10px",null,"10px");
-const chatUI = ui(null,"10px",null,"10px");
-
-chatUI.innerHTML = `
-	<div id="log" style="height:120px;overflow:auto"></div>
-	<input id="input" placeholder="chat" style="width:100%">
-`;
-
 function ui(t,l,r,b){
 	const d=document.createElement("div");
 	d.className="ui";
@@ -151,67 +154,123 @@ function ui(t,l,r,b){
 	return d;
 }
 
+const tributeUI = ui("10px","10px");
+const killUI = ui("10px",null,"10px");
+const spectatorUI = ui(null,null,"10px","160px");
+const chatUI = ui(null,"10px",null,"10px");
+
+chatUI.innerHTML = `
+	<div id="log" style="height:120px;overflow:auto;margin-bottom:6px"></div>
+	<input id="input" placeholder="chat">
+`;
+
 /* ======================
-   STATE
+   NAME FILTER
 ====================== */
-let tracked=null,lastTrackedPos=null,trackedVelocity=0;
-let followMode="behind";
-const players=new Map();
+let badNames = [];
+fetch("/badnames.txt")
+	.then(r=>r.text())
+	.then(t=>{
+		badNames = t.split("\n").map(w=>w.trim().toLowerCase()).filter(Boolean);
+	});
+
+function isNameClean(n){
+	const s=n.toLowerCase();
+	return !badNames.some(b=>s.includes(b));
+}
+
+/* ======================
+   SOCKET
+====================== */
+const socket = io();
+
+/* ======================
+   SPECTATOR NAME
+====================== */
+let spectatorName=null;
+(function promptName(){
+	while(!spectatorName){
+		const n=prompt("Choose a spectator name:");
+		if(!n||n.length<3||n.length>16)continue;
+		if(!isNameClean(n)){ alert("Name not allowed"); continue; }
+		spectatorName=n;
+		socket.emit("spectator:name", n);
+	}
+})();
+
+/* ======================
+   CHAT
+====================== */
+let lastChatTime=0;
+const CHAT_COOLDOWN=1200;
+let chatFadeTimer=null;
+
+function resetChatFade(){
+	const log=document.getElementById("log");
+	log.classList.remove("fade");
+	clearTimeout(chatFadeTimer);
+	chatFadeTimer=setTimeout(()=>log.classList.add("fade"),8000);
+}
+
+document.getElementById("input").addEventListener("keydown",e=>{
+	if(e.key!=="Enter"||!e.target.value)return;
+	const now=performance.now();
+	if(now-lastChatTime<CHAT_COOLDOWN)return;
+	lastChatTime=now;
+	socket.emit("chat:send",e.target.value);
+	e.target.value="";
+	resetChatFade();
+});
+
+socket.on("chat:msg",m=>{
+	const log=document.getElementById("log");
+	log.innerHTML+=`<div><b>${m.from}:</b> ${m.msg}</div>`;
+	log.scrollTop=log.scrollHeight;
+	resetChatFade();
+});
+
+/* ======================
+   NAME TAG
+====================== */
+function makeNameTag(text,color="#fff"){
+	const c=document.createElement("canvas");
+	c.width=256;c.height=64;
+	const x=c.getContext("2d");
+	x.fillStyle="rgba(0,0,0,.55)";
+	x.fillRect(0,0,256,64);
+	x.fillStyle=color;
+	x.font="28px system-ui";
+	x.textAlign="center";
+	x.textBaseline="middle";
+	x.fillText(text,128,32);
+	const t=new THREE.CanvasTexture(c);
+	const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true}));
+	s.scale.set(160,40,1);
+	s.position.y=80;
+	return s;
+}
 
 /* ======================
    PLAYER
 ====================== */
-function makePlayer(){
-	const dot=new THREE.Mesh(
+const players=new Map();
+function makePlayer(name){
+	const m=new THREE.Mesh(
 		new THREE.SphereGeometry(10,16,16),
-		new THREE.MeshStandardMaterial({
-			color:0x00ff88,
-			emissive:0x003322,
-			emissiveIntensity:0.6
-		})
+		new THREE.MeshStandardMaterial({color:0x00ff88,emissive:0x003322})
 	);
-	dot.castShadow=true;
-
-	const hit=new THREE.Mesh(
-		new THREE.SphereGeometry(45),
-		new THREE.MeshBasicMaterial({transparent:true,opacity:0})
-	);
-	hit.userData.isHitbox=true;
-	dot.add(hit);
-
-	const arrow=new THREE.ArrowHelper(
-		new THREE.Vector3(0,0,1),
-		new THREE.Vector3(),
-		90,
-		0xffff00
-	);
-	dot.add(arrow);
-	dot.userData.arrow=arrow;
-
-	const halo=new THREE.Mesh(
-		new THREE.RingGeometry(14,22,32),
-		new THREE.MeshBasicMaterial({
-			color:0x00ffcc,
-			transparent:true,
-			opacity:0,
-			side:THREE.DoubleSide
-		})
-	);
-	halo.rotation.x=-Math.PI/2;
-	halo.userData.isHalo=true;
-	dot.add(halo);
-
-	return dot;
+	const tag=makeNameTag(name);
+	m.add(tag);
+	m.userData.tag=tag;
+	return m;
 }
 
 /* ======================
-   PLAYER UPDATE
+   UPDATE PLAYERS
 ====================== */
-const raycaster=new THREE.Raycaster();
-const rayOrigin=new THREE.Vector3();
-const rayDown=new THREE.Vector3(0,-1,0);
-const targetPos=new THREE.Vector3();
-const lookDir=new THREE.Vector3();
+const ray=new THREE.Raycaster();
+const down=new THREE.Vector3(0,-1,0);
+const tmp=new THREE.Vector3();
 
 async function updatePlayers(){
 	const data=await fetch("/map").then(r=>r.json());
@@ -221,97 +280,41 @@ async function updatePlayers(){
 	for(const p of data){
 		active.add(p.id);
 		if(!players.has(p.id)){
-			const m=makePlayer();
+			const m=makePlayer(p.name);
 			playerGroup.add(m);
 			players.set(p.id,m);
 		}
 		const m=players.get(p.id);
-		let y=p.y??6;
-
-		if(terrainMesh){
-			rayOrigin.set(p.x,5000,p.z);
-			raycaster.set(rayOrigin,rayDown);
-			const hit=raycaster.intersectObject(terrainMesh,true);
-			if(hit[0]) y=hit[0].point.y+6;
-		}
-
-		targetPos.set(p.x,y,p.z);
-		m.position.lerp(targetPos,0.35);
-
-		if(p.lookX!==undefined){
-			lookDir.set(p.lookX,0,p.lookZ).normalize();
-			m.userData.arrow.setDirection(lookDir);
-		}
+		tmp.set(p.x,5000,p.z);
+		ray.set(tmp,down);
+		const hit=terrainMesh?ray.intersectObject(terrainMesh,true)[0]:null;
+		m.position.set(p.x,hit?hit.point.y+6:6,p.z);
 	}
-
-	for(const [id,m] of players){
-		if(!active.has(id)){
-			playerGroup.remove(m);
-			players.delete(id);
-		}
-	}
+	for(const [id,m] of players)
+		if(!active.has(id)){playerGroup.remove(m);players.delete(id);}
 }
 setInterval(updatePlayers,200);
 
 /* ======================
-   TRACKING
+   SPECTATORS
 ====================== */
-addEventListener("pointerdown",e=>{
-	const mouse=new THREE.Vector2(
-		e.clientX/innerWidth*2-1,
-		-(e.clientY/innerHeight)*2+1
-	);
-	raycaster.setFromCamera(mouse,camera);
-	const hit=raycaster.intersectObjects(playerGroup.children,true)
-		.find(h=>h.object.userData.isHitbox);
-	if(hit) tracked=hit.object.parent;
+socket.on("spectators:init",list=>{
+	spectatorGroup.clear();
+	spectatorUI.innerHTML="<b>Spectators</b><br>";
+	list.forEach(s=>{
+		const m=new THREE.Mesh(
+			new THREE.SphereGeometry(12),
+			new THREE.MeshStandardMaterial({color:s.color})
+		);
+		const tag=makeNameTag(s.name,"#aaccff");
+		m.add(tag);
+		spectatorGroup.add(m);
+		spectatorUI.innerHTML+=`<div>● ${s.name}</div>`;
+	});
 });
 
 /* ======================
-   CINEMATIC FOLLOW
-====================== */
-const camVel=new THREE.Vector3();
-const camTarget=new THREE.Vector3();
-
-function follow(){
-	if(!tracked||followMode==="free")return;
-
-	if(lastTrackedPos)
-		trackedVelocity=tracked.position.distanceTo(lastTrackedPos);
-	lastTrackedPos=tracked.position.clone();
-
-	const speed=THREE.MathUtils.clamp(trackedVelocity*6,0,1400);
-	const offset=followMode==="behind"
-		?new THREE.Vector3(0,320+speed*0.25,780+speed)
-		:new THREE.Vector3(0,1400+speed,0);
-
-	camTarget.copy(tracked.position).add(offset);
-	camVel.subVectors(camTarget,camera.position).multiplyScalar(0.06);
-	camera.position.add(camVel);
-
-	camera.lookAt(camera.position.clone().lerp(tracked.position,0.12));
-}
-
-/* ======================
-   GLOW UPDATE
-====================== */
-function updateGlow(t){
-	for(const m of playerGroup.children){
-		const halo=m.children.find(c=>c.userData.isHalo);
-		if(!halo)continue;
-
-		if(m===tracked){
-			halo.material.opacity=0.5+Math.sin(t*0.006)*0.3;
-			m.material.emissiveIntensity=1.2;
-		}else{
-			halo.material.opacity=0;
-			m.material.emissiveIntensity=0.5;
-		}
-	}
-}
-
-/* ======================
-   FOG HEIGHT BIAS
+   FOG HEIGHT
 ====================== */
 function updateFog(){
 	scene.fog.density=0.000045*
@@ -323,10 +326,11 @@ function updateFog(){
 ====================== */
 function animate(){
 	requestAnimationFrame(animate);
-	follow();
-	updateGlow(performance.now());
 	updateFog();
 	controls.update();
+	for(const g of [playerGroup,spectatorGroup])
+		for(const m of g.children)
+			m.children.forEach(c=>c.isSprite&&c.quaternion.copy(camera.quaternion));
 	renderer.render(scene,camera);
 }
 animate();
