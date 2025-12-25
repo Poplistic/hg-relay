@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Dead Tributes</title>
+<title>Spectator Map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <style>
-	body { margin:0; overflow:hidden; background:#111; font-family:system-ui,sans-serif; }
-	canvas { display:block; }
+	body { margin:0; overflow:hidden; background:black }
+	canvas { display:block }
 
 	.ui {
 		position:absolute;
@@ -19,16 +20,11 @@
 		padding:8px;
 		font-size:12px;
 	}
-
-	.nameTag {
-		color:white;
-		text-align:center;
-		margin-top:-20px;
-		font-size:14px;
-		font-weight:bold;
-		text-shadow: 0 0 5px black;
-	}
+	
+	.name { cursor:pointer; padding:2px 0 }
+	.name:hover { color:#ffd700 }
 </style>
+
 <script type="importmap">
 {
   "imports": {
@@ -37,9 +33,28 @@
 }
 </script>
 </head>
+
 <body>
+	
+  <a href="/fallen.html" target="_blank" style="position:absolute; top:10px; right:10px; color:white; background:rgba(0,0,0,0.5); padding:8px 12px; border-radius:6px; font-size:14px; text-decoration:none;">Fallen Tributes</a>
+	
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
 <script type="module">
 import * as THREE from "three";
+import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
+import {
+	acceleratedRaycast,
+	computeBoundsTree,
+	disposeBoundsTree
+} from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.4/build/index.module.js";
+
+/* ======================
+   BVH PATCH
+====================== */
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 
 /* ======================
    RENDERER / SCENE
@@ -50,110 +65,230 @@ renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111);
+scene.background = new THREE.Color(0x050508);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 10000);
-camera.position.set(0, 400, 800);
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 30000);
+camera.position.set(0,1200,1800);
 
 /* ======================
    LIGHTING
 ====================== */
-scene.add(new THREE.AmbientLight(0xffffff,0.5));
-const sun = new THREE.DirectionalLight(0xffffff,1);
-sun.position.set(500,800,500);
+scene.add(new THREE.AmbientLight(0xffffff,0.35));
+const sun = new THREE.DirectionalLight(0xffffff,1.1);
+sun.position.set(3000,6000,2000);
 scene.add(sun);
 
 /* ======================
    UI
 ====================== */
-const tributeUI = document.createElement("div");
-tributeUI.className = "ui";
-tributeUI.style.top = "10px";
-tributeUI.style.left = "10px";
-tributeUI.innerHTML = "<b>Dead Tributes</b>";
-document.body.appendChild(tributeUI);
+const tributeUI = ui("10px","10px");
+const chatUI = ui(null,"10px",null,"10px");
+
+chatUI.innerHTML = `
+<div id="log" style="height:120px;overflow:auto"></div>
+<input id="input" placeholder="chat">
+`;
+
+function ui(t,l,r,b){
+	const d=document.createElement("div");
+	d.className="ui";
+	if(t)d.style.top=t;
+	if(l)d.style.left=l;
+	if(r)d.style.right=r;
+	if(b)d.style.bottom=b;
+	document.body.appendChild(d);
+	return d;
+}
 
 /* ======================
-   DEAD PLAYER GROUP
+   SOCKET + CHAT
+====================== */
+const socket = io();
+const log = document.getElementById("log");
+const input = document.getElementById("input");
+
+input.addEventListener("keydown",e=>{
+	if(e.key==="Enter" && input.value){
+		socket.emit("chat:send", input.value);
+		input.value="";
+	}
+});
+
+socket.on("chat:msg",m=>{
+	log.innerHTML += `<div><b>${m.from}:</b> ${m.msg}</div>`;
+	log.scrollTop = log.scrollHeight;
+});
+
+/* ======================
+   ARENA (BVH)
+====================== */
+let arena = null;
+const arenaMeshes = [];
+
+const loader = new OBJLoader();
+loader.load("/arena.obj", obj => {
+
+	obj.traverse(c=>{
+		if(c.isMesh){
+			c.geometry.computeVertexNormals();
+			c.geometry.computeBoundsTree(); // BVH BUILD
+
+			c.material = new THREE.MeshStandardMaterial({
+				color:0x888888,
+				roughness:0.9
+			});
+
+			arenaMeshes.push(c);
+		}
+	});
+
+	const box = new THREE.Box3().setFromObject(obj);
+	const center = box.getCenter(new THREE.Vector3());
+	obj.position.sub(center);
+
+	obj.scale.set(1,1,1);
+	scene.add(obj);
+	arena = obj;
+});
+
+/* ======================
+   PLAYERS
 ====================== */
 const group = new THREE.Group();
 scene.add(group);
-const deadPlayers = new Map();
+const players = new Map();
 
-/* ======================
-   MAKE BUST
-====================== */
-function makeBust(name) {
-	const m = new THREE.Group();
-
-	const head = new THREE.Mesh(
-		new THREE.SphereGeometry(20, 16, 16),
-		new THREE.MeshStandardMaterial({ color:0xff5555 })
+function makePlayer(){
+	const m = new THREE.Mesh(
+		new THREE.SphereGeometry(10,16,16),
+		new THREE.MeshStandardMaterial()
 	);
-	head.position.y = 30;
-	m.add(head);
 
 	const arrow = new THREE.Mesh(
-		new THREE.ConeGeometry(6,15,8),
+		new THREE.ConeGeometry(6,20,8),
 		new THREE.MeshStandardMaterial({ color:0xffff00 })
 	);
 	arrow.rotation.x = Math.PI/2;
-	arrow.position.y = 55;
+	arrow.position.y = 35;
 	m.add(arrow);
 
-	const label = document.createElement("div");
-	label.className = "nameTag";
-	label.textContent = name;
-	document.body.appendChild(label);
+	m.userData = {
+		pos: new THREE.Vector3(),
+		vel: new THREE.Vector3(),
+		lookAngle: 0,
+		lookTarget: 0
+	};
 
-	m.userData = { label };
 	return m;
 }
 
 /* ======================
-   FETCH DEAD PLAYERS
+   SPECTATE TARGET
 ====================== */
-async function updateDead() {
-	const players = await fetch("/map").then(r=>r.json());
-	const kills = await fetch("/kills").then(r=>r.json());
+let spectating = null;
 
-	const deadIds = new Set(kills.map(k => k.victim));
-
-	let i = 0;
-	const spacingX = 120;
-	const spacingZ = 120;
-	for(const k of kills){
-		const id = k.victim;
-		if(!deadIds.has(id)) continue;
-		if(deadPlayers.has(id)) continue;
-
-		const name = k.victim;
-		const bust = makeBust(name);
-		bust.position.set((i%5)*spacingX - 2*spacingX,0,Math.floor(i/5)*-spacingZ);
-		group.add(bust);
-		deadPlayers.set(id,bust);
-		i++;
-	}
-}
-setInterval(updateDead,2000);
+addEventListener("pointerdown",e=>{
+	const mouse = new THREE.Vector2(
+		(e.clientX/innerWidth)*2-1,
+		-(e.clientY/innerHeight)*2+1
+	);
+	const ray = new THREE.Raycaster();
+	ray.setFromCamera(mouse,camera);
+	const hit = ray.intersectObjects(group.children)[0];
+	if(hit) spectating = hit.object;
+});
 
 /* ======================
-   ANIMATE
+   UPDATE FROM SERVER
 ====================== */
-function animate() {
+async function updatePlayers(){
+	const data = await fetch("/map").then(r=>r.json());
+
+	tributeUI.innerHTML = "<b>Tributes</b><br>";
+	const alive = new Set();
+
+	for(const p of data){
+		alive.add(p.id);
+
+		if(!players.has(p.id)){
+			const m = makePlayer();
+			group.add(m);
+			players.set(p.id,m);
+		}
+
+		const m = players.get(p.id);
+		const u = m.userData;
+
+		u.vel.set(p.x,p.y,p.z).sub(u.pos);
+		u.pos.set(p.x,p.y,p.z);
+
+		if(p.health > 66) m.material.color.set(0x00ff00);
+		else if(p.health > 33) m.material.color.set(0xffaa00);
+		else m.material.color.set(0xff0000);
+
+		if(p.lookX !== undefined){
+			u.lookTarget = -Math.atan2(p.lookX, p.lookZ);
+		}
+
+		const div = document.createElement("div");
+		div.className = "name";
+		div.textContent = p.name;
+		div.onclick = ()=> spectating = m;
+		tributeUI.appendChild(div);
+	}
+
+	for(const [id,m] of players){
+		if(!alive.has(id)){
+			group.remove(m);
+			players.delete(id);
+			if(m === spectating) spectating = null;
+		}
+	}
+}
+setInterval(updatePlayers,200);
+
+/* ======================
+   CAMERA COLLISION (BVH)
+====================== */
+const camRay = new THREE.Raycaster();
+const camDir = new THREE.Vector3();
+const camTarget = new THREE.Vector3();
+
+/* ======================
+   LOOP
+====================== */
+function animate(){
 	requestAnimationFrame(animate);
 
-	// Rotate group slowly
-	group.rotation.y += 0.002;
+	for(const m of group.children){
+		const u = m.userData;
+		m.position.lerp(u.pos,0.15);
+		u.lookAngle = THREE.MathUtils.lerp(u.lookAngle,u.lookTarget,0.25);
+		m.children[0].rotation.y = u.lookAngle;
+	}
 
-	// Update label positions
-	for(const bust of group.children){
-		const pos = bust.position.clone();
-		pos.project(camera);
+	if(spectating){
+		const u = spectating.userData;
 
-		const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
-		const y = ( -pos.y * 0.5 + 0.5) * window.innerHeight;
-		bust.userData.label.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+		const desiredOffset = new THREE.Vector3(
+			Math.sin(u.lookAngle) * -700,
+			450,
+			Math.cos(u.lookAngle) * -700
+		);
+
+		camTarget.copy(spectating.position).add(desiredOffset);
+
+		if(arenaMeshes.length){
+			camDir.subVectors(camTarget, spectating.position).normalize();
+			camRay.set(spectating.position, camDir);
+			const hits = camRay.intersectObjects(arenaMeshes, true);
+			if(hits.length && hits[0].distance < 700){
+				camTarget.copy(hits[0].point).addScaledVector(camDir, -40);
+			}
+		}
+
+		camera.position.lerp(camTarget,0.1);
+		camera.lookAt(spectating.position.clone().add(new THREE.Vector3(0,120,0)));
 	}
 
 	renderer.render(scene,camera);
@@ -163,10 +298,10 @@ animate();
 /* ======================
    RESIZE
 ====================== */
-window.addEventListener("resize",()=>{
-	camera.aspect = window.innerWidth/window.innerHeight;
+addEventListener("resize",()=>{
+	camera.aspect = innerWidth/innerHeight;
 	camera.updateProjectionMatrix();
-	renderer.setSize(window.innerWidth, window.innerHeight);
+	renderer.setSize(innerWidth, innerHeight);
 });
 </script>
 </body>
