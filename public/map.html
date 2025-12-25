@@ -11,14 +11,8 @@ import { Sky } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/obj
 const DOT_RADIUS = 5;
 const HITBOX_RADIUS = 40;
 const PREDICTION_TIME = 0.15;
-
-const CAM_MODES = {
-	FREE: "free",
-	OVERHEAD: "overhead",
-	BEHIND: "behind"
-};
-
-let camMode = CAM_MODES.FREE;
+const GROUND_RAY_HEIGHT = 500;
+const GROUND_OFFSET = 8;
 
 /* ======================
    RENDERERS
@@ -41,7 +35,7 @@ document.body.appendChild(labelRenderer.domElement);
 ====================== */
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 10000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 20000);
 camera.position.set(2000, 1600, 2000);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -62,6 +56,41 @@ sky.material.uniforms.rayleigh.value = 2;
 const dirLight = new THREE.DirectionalLight(0xffffff, 3);
 scene.add(dirLight);
 scene.add(new THREE.AmbientLight(0x404060, 0.4));
+
+/* ======================
+   KILL FEED UI
+====================== */
+
+const killFeed = document.createElement("div");
+killFeed.style.position = "absolute";
+killFeed.style.left = "10px";
+killFeed.style.bottom = "10px";
+killFeed.style.fontFamily = "sans-serif";
+killFeed.style.color = "white";
+killFeed.style.pointerEvents = "none";
+document.body.appendChild(killFeed);
+
+function addKillFeed(text) {
+	const row = document.createElement("div");
+	row.textContent = text;
+	row.style.background = "rgba(0,0,0,0.6)";
+	row.style.padding = "6px 10px";
+	row.style.marginTop = "6px";
+	row.style.borderRadius = "6px";
+	row.style.animation = "fadeout 6s forwards";
+
+	killFeed.appendChild(row);
+	setTimeout(() => row.remove(), 6000);
+}
+
+const style = document.createElement("style");
+style.textContent = `
+@keyframes fadeout {
+	0% { opacity: 1 }
+	70% { opacity: 1 }
+	100% { opacity: 0 }
+}`;
+document.head.appendChild(style);
 
 /* ======================
    PLAYER MARKERS
@@ -85,28 +114,23 @@ function makeMarker(name) {
 	);
 	g.add(hitbox);
 
-	// Label
 	const div = document.createElement("div");
 	div.style.color = "#0ff";
-	div.style.fontSize = "14px";
 	div.style.fontWeight = "bold";
-	div.style.whiteSpace = "nowrap";
 	div.style.textShadow = "0 0 4px black";
-	div.innerText = name;
-
 	const label = new CSS2DObject(div);
 	label.position.set(0, 25, 0);
 	label.visible = false;
 	g.add(label);
 
 	g.userData = {
+		name,
 		dot,
 		hitbox,
 		label,
-		name,
 		lastPos: null,
-		velocity: new THREE.Vector3(),
-		look: new THREE.Vector3(0, 0, 1)
+		lastTime: 0,
+		velocity: new THREE.Vector3()
 	};
 
 	return g;
@@ -116,32 +140,30 @@ const markers = new Map();
 let tracked = null;
 
 /* ======================
-   TRIBUTE LIST UI
+   GROUND RAYCAST
 ====================== */
 
-const list = document.createElement("div");
-list.style.position = "absolute";
-list.style.top = "10px";
-list.style.right = "10px";
-list.style.background = "rgba(0,0,0,0.6)";
-list.style.padding = "10px";
-list.style.borderRadius = "8px";
-list.style.color = "white";
-list.style.fontFamily = "sans-serif";
-list.style.maxHeight = "60vh";
-list.style.overflowY = "auto";
-document.body.appendChild(list);
+const groundRay = new THREE.Raycaster();
+const down = new THREE.Vector3(0, -1, 0);
 
-function updateTributeList() {
-	list.innerHTML = "<b>Tributes</b><br>";
-	markers.forEach((m) => {
-		const row = document.createElement("div");
-		row.innerText = m.userData.name;
-		row.style.cursor = "pointer";
-		row.style.color = m === tracked ? "#0ff" : "#fff";
-		row.onclick = () => tracked = m;
-		list.appendChild(row);
+function snapToGround(pos) {
+	groundRay.set(
+		new THREE.Vector3(pos.x, GROUND_RAY_HEIGHT, pos.z),
+		down
+	);
+
+	const grounds = [];
+	scene.traverse(o => {
+		if (o.isMesh && o.userData.isGround) grounds.push(o);
 	});
+
+	if (!grounds.length) return pos;
+
+	const hits = groundRay.intersectObjects(grounds, true);
+	if (hits.length) {
+		pos.y = hits[0].point.y + GROUND_OFFSET;
+	}
+	return pos;
 }
 
 /* ======================
@@ -162,7 +184,7 @@ function updatePlayers(data) {
 
 		const m = markers.get(p.id);
 		const now = performance.now() / 1000;
-		const pos = new THREE.Vector3(p.x, 20, p.z);
+		const pos = new THREE.Vector3(p.x, 0, p.z);
 
 		if (m.userData.lastPos) {
 			const dt = Math.max(now - m.userData.lastTime, 0.016);
@@ -171,23 +193,23 @@ function updatePlayers(data) {
 
 		m.userData.lastPos = pos.clone();
 		m.userData.lastTime = now;
-		m.userData.look.set(p.lookX ?? 0, 0, p.lookZ ?? 1).normalize();
 
 		const predicted = pos.clone().add(
 			m.userData.velocity.clone().multiplyScalar(PREDICTION_TIME)
 		);
 
-		m.position.lerp(predicted, 0.5);
+		m.position.lerp(snapToGround(predicted), 0.5);
 	}
 
+	// Detect deaths
 	for (const [id, m] of markers) {
 		if (!seen.has(id)) {
+			addKillFeed(`${m.userData.name} eliminated`);
 			playerGroup.remove(m);
 			markers.delete(id);
+			if (tracked === m) tracked = null;
 		}
 	}
-
-	updateTributeList();
 }
 
 /* ======================
@@ -199,17 +221,7 @@ setInterval(async () => {
 }, 200);
 
 /* ======================
-   CAMERA MODES
-====================== */
-
-window.addEventListener("keydown", e => {
-	if (e.key === "1") camMode = CAM_MODES.FREE;
-	if (e.key === "2") camMode = CAM_MODES.OVERHEAD;
-	if (e.key === "3") camMode = CAM_MODES.BEHIND;
-});
-
-/* ======================
-   CLICK PICKING
+   PICKING
 ====================== */
 
 const raycaster = new THREE.Raycaster();
@@ -223,7 +235,6 @@ renderer.domElement.addEventListener("click", e => {
 	raycaster.setFromCamera(pointer, camera);
 	const hitboxes = [...markers.values()].map(m => m.userData.hitbox);
 	const hits = raycaster.intersectObjects(hitboxes);
-
 	tracked = hits.length ? hits[0].object.parent : null;
 });
 
@@ -235,39 +246,26 @@ function animate() {
 	requestAnimationFrame(animate);
 
 	markers.forEach(m => {
-		const selected = m === tracked;
-		m.userData.dot.material.color.set(selected ? 0x00ffff : 0x00ff00);
-		m.userData.label.visible = selected;
+		const sel = m === tracked;
+		m.userData.dot.material.color.set(sel ? 0x00ffff : 0x00ff00);
+		m.userData.label.visible = sel;
 
-		if (selected) {
+		if (sel) {
 			const dist = camera.position.distanceTo(m.position);
-			m.userData.label.element.innerText =
+			m.userData.label.element.textContent =
 				`${m.userData.name} (${Math.floor(dist)} studs)`;
 		}
 	});
 
 	if (tracked) {
-		if (camMode === CAM_MODES.OVERHEAD) {
-			camera.position.lerp(
-				tracked.position.clone().add(new THREE.Vector3(0, 1200, 0)),
-				0.1
-			);
-			controls.target.lerp(tracked.position, 0.1);
-		}
-
-		if (camMode === CAM_MODES.BEHIND) {
-			const behind = tracked.userData.look.clone().multiplyScalar(-600);
-			camera.position.lerp(
-				tracked.position.clone().add(behind).add(new THREE.Vector3(0, 200, 0)),
-				0.1
-			);
-			controls.target.lerp(tracked.position, 0.1);
-		}
+		camera.position.lerp(
+			tracked.position.clone().add(new THREE.Vector3(0, 900, 900)),
+			0.05
+		);
+		controls.target.lerp(tracked.position, 0.1);
 	}
 
-	controls.enabled = camMode === CAM_MODES.FREE;
 	controls.update();
-
 	renderer.render(scene, camera);
 	labelRenderer.render(scene, camera);
 }
