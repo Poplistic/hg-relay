@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
    ENV
 ====================== */
 const { SESSION_TOKEN, PORT = 10000 } = process.env;
+
 if (!SESSION_TOKEN) {
 	console.error("❌ SESSION_TOKEN missing");
 	process.exit(1);
@@ -30,7 +31,9 @@ app.use(express.static(path.join(__dirname, "public")));
    HTTP + WS
 ====================== */
 const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*" } });
+const io = new Server(httpServer, {
+	cors: { origin: "*" }
+});
 
 /* ======================
    SECURITY
@@ -40,13 +43,17 @@ let requestTimes = [];
 
 function verify(req) {
 	const { token, nonce, timestamp } = req.body;
+
 	if (token !== SESSION_TOKEN) return false;
 	if (nonce <= lastNonce) return false;
 	if (Math.abs(Date.now() / 1000 - timestamp) > 10) return false;
 
 	lastNonce = nonce;
-	requestTimes.push(Date.now());
-	requestTimes = requestTimes.filter(t => Date.now() - t < 1000);
+
+	const now = Date.now();
+	requestTimes.push(now);
+	requestTimes = requestTimes.filter(t => now - t < 1000);
+
 	return requestTimes.length < 40;
 }
 
@@ -56,49 +63,67 @@ function verify(req) {
 let players = [];
 let lighting = {};
 let killFeed = [];
+
 const MAX_KILLS = 20;
 
 /* ======================
-   MAP ENDPOINTS
+   MAP
 ====================== */
 app.post("/map", (req, res) => {
 	if (!verify(req)) return res.sendStatus(403);
-	players = req.body.players || [];
+
+	players = Array.isArray(req.body.players)
+		? req.body.players
+		: [];
+
 	res.sendStatus(200);
 });
 
-app.get("/map", (_, res) => res.json(players));
+app.get("/map", (_, res) => {
+	res.json(players);
+});
 
 /* ======================
    LIGHTING
 ====================== */
 app.post("/lighting", (req, res) => {
 	if (!verify(req)) return res.sendStatus(403);
+
 	lighting = req.body.lighting || lighting;
 	res.sendStatus(200);
 });
 
-app.get("/lighting", (_, res) => res.json(lighting));
+app.get("/lighting", (_, res) => {
+	res.json(lighting);
+});
 
 /* ======================
    KILL FEED
 ====================== */
 app.post("/kill", (req, res) => {
 	if (!verify(req)) return res.sendStatus(403);
+
 	const { killer, victim } = req.body;
 	if (!killer || !victim) return res.sendStatus(400);
 
-	killFeed.unshift({ killer, victim, time: Date.now() });
+	killFeed.unshift({
+		killer,
+		victim,
+		time: Date.now()
+	});
+
 	killFeed = killFeed.slice(0, MAX_KILLS);
 
 	io.emit("kill:feed", killFeed);
 	res.sendStatus(200);
 });
 
-app.get("/kills", (_, res) => res.json(killFeed));
+app.get("/kills", (_, res) => {
+	res.json(killFeed);
+});
 
 /* ======================
-   SPECTATORS
+   SPECTATORS (WS)
 ====================== */
 const spectators = new Map();
 
@@ -117,12 +142,15 @@ io.on("connection", socket => {
 	socket.broadcast.emit("spectator:join", spec);
 
 	socket.on("spectator:update", data => {
+		if (!data) return;
 		Object.assign(spec, data);
 		socket.broadcast.emit("spectator:update", spec);
 	});
 
 	socket.on("chat:send", msg => {
-		if (typeof msg !== "string" || msg.length > 120) return;
+		if (typeof msg !== "string") return;
+		if (msg.length > 120) return;
+
 		io.emit("chat:msg", {
 			from: spec.name,
 			msg,
@@ -140,5 +168,5 @@ io.on("connection", socket => {
    START
 ====================== */
 httpServer.listen(PORT, () => {
-	console.log(`🚀 HG Relay running on ${PORT}`);
+	console.log(`🚀 HG Relay running on port ${PORT}`);
 });
