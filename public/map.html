@@ -70,7 +70,7 @@ import * as THREE from "three";
 import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 
 /* ================= RENDERER ================= */
-const renderer = new THREE.WebGLRenderer({ antialias:true });
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
@@ -119,7 +119,6 @@ rt.depthTexture = new THREE.DepthTexture();
 const postScene = new THREE.Scene();
 const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-// Fullscreen quad material
 const postMat = new THREE.ShaderMaterial({
   uniforms: {
     tColor: { value: rt.texture },
@@ -170,37 +169,34 @@ const postMat = new THREE.ShaderMaterial({
       float grid = abs(sin(vUv.x * 80.0) * sin(vUv.y * 80.0));
       vec3 floorEffect = mix(floorColor, lineColor, grid);
 
-      // Blend floor pattern based on depth (only near the ground)
       col = mix(col, floorEffect, smoothstep(0.0, 0.4, d));
-
-      // Subtle fog
       col = mix(col, vec3(0.18, 0.02, 0.04), smoothstep(0.25, 0.9, d));
 
       gl_FragColor = vec4(col, 1.);
     }
   `
 });
+postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), postMat));
 
-postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat));
-    
-/* ================= PLAYERS ================= */
-const players = new Map();
-function makePlayer() {
+/* ================= ROBLOX PLAYER BUST ================= */
+function getRobloxBustUrl(userId, size=150) {
+    return `https://www.roblox.com/headshot-thumbnail/image?userId=${userId}&width=${size}&height=${size}&format=png`;
+}
+
+function makePlayer(userId) {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(
-        new THREE.SphereGeometry(10, 24, 24),
-        new THREE.MeshStandardMaterial({
-            color: 0xff6b7a,
-            emissive: 0xff2a40,
-            emissiveIntensity: 0.7
-        })
-    );
-    g.add(body);
+    const texture = new THREE.TextureLoader().load(getRobloxBustUrl(userId));
+    const mat = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), mat);
+    plane.rotation.x = -Math.PI / 2;
+    g.add(plane);
     return g;
 }
 
 /* ================= UPDATE PLAYERS ================= */
+const players = new Map();
 let follow = null;
+
 async function updatePlayers() {
     const data = await fetch("/map").then(r => r.json());
     ui.innerHTML = "<b>Tributes</b>";
@@ -209,7 +205,7 @@ async function updatePlayers() {
     for (const p of data) {
         alive.add(p.id);
         if (!players.has(p.id)) {
-            const m = makePlayer();
+            const m = makePlayer(p.userId);
             scene.add(m);
             players.set(p.id, m);
         }
@@ -224,6 +220,7 @@ async function updatePlayers() {
         ui.appendChild(d);
     }
 
+    // Remove dead players
     for (const [id, m] of players) {
         if (!alive.has(id)) {
             scene.remove(m);
@@ -234,49 +231,34 @@ async function updatePlayers() {
 setInterval(updatePlayers, 200);
 
 /* ================= CAMERA CONTROLS ================= */
-const cam = {
-    yaw: 0,
-    pitch: 0,
-    velocity: new THREE.Vector3(),
-    accel: 2.4,
-    damping: 0.88,
-    baseSpeed: 18,
-    boost: 3.0
-};
-
-const keys = { w:false, a:false, s:false, d:false, shift:false };
+const cam = { yaw:0, pitch:0, velocity:new THREE.Vector3(), accel:2.4, damping:0.88, baseSpeed:18, boost:3.0 };
+const keys = { w:false,a:false,s:false,d:false,shift:false };
 let rotating = false;
 
 renderer.domElement.addEventListener("mousedown", e => {
-    if (e.button === 0) {
-        rotating = true;
-        renderer.domElement.requestPointerLock();
-    }
+    if(e.button===0){ rotating=true; renderer.domElement.requestPointerLock(); }
 });
-addEventListener("mouseup", () => {
-    rotating = false;
-    document.exitPointerLock();
-});
+addEventListener("mouseup",()=>{ rotating=false; document.exitPointerLock(); });
 addEventListener("mousemove", e => {
-    if (rotating && document.pointerLockElement) {
-        cam.yaw -= e.movementX * 0.002;
-        cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch - e.movementY * 0.002));
+    if(rotating && document.pointerLockElement){
+        cam.yaw -= e.movementX*0.002;
+        cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch - e.movementY*0.002));
     }
 });
 addEventListener("keydown", e => {
-    if (e.code==="KeyW") keys.w = true;
-    if (e.code==="KeyA") keys.a = true;
-    if (e.code==="KeyS") keys.s = true;
-    if (e.code==="KeyD") keys.d = true;
-    if (e.code==="ShiftLeft") keys.shift = true;
-    if("KeyWKeyAKeySKeyD".includes(e.code)) follow = null;
+    if(e.code==="KeyW") keys.w=true;
+    if(e.code==="KeyA") keys.a=true;
+    if(e.code==="KeyS") keys.s=true;
+    if(e.code==="KeyD") keys.d=true;
+    if(e.code==="ShiftLeft") keys.shift=true;
+    if("KeyWKeyAKeySKeyD".includes(e.code)) follow=null;
 });
 addEventListener("keyup", e => {
-    if (e.code==="KeyW") keys.w = false;
-    if (e.code==="KeyA") keys.a = false;
-    if (e.code==="KeyS") keys.s = false;
-    if (e.code==="KeyD") keys.d = false;
-    if (e.code==="ShiftLeft") keys.shift = false;
+    if(e.code==="KeyW") keys.w=false;
+    if(e.code==="KeyA") keys.a=false;
+    if(e.code==="KeyS") keys.s=false;
+    if(e.code==="KeyD") keys.d=false;
+    if(e.code==="ShiftLeft") keys.shift=false;
 });
 
 /* ================= SOCKET.IO KILL FEED ================= */
@@ -298,42 +280,39 @@ function animate() {
     camera.rotation.y = cam.yaw;
     camera.rotation.x = cam.pitch;
 
-    // Camera movement
     const forward = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
     const right = new THREE.Vector3(1,0,0).applyEuler(camera.rotation);
+
     let mult = cam.baseSpeed;
-    if (keys.shift) mult *= cam.boost;
-    if (keys.w) cam.velocity.addScaledVector(forward, cam.accel*mult);
-    if (keys.s) cam.velocity.addScaledVector(forward, -cam.accel*mult);
-    if (keys.a) cam.velocity.addScaledVector(right, -cam.accel*mult);
-    if (keys.d) cam.velocity.addScaledVector(right, cam.accel*mult);
+    if(keys.shift) mult *= cam.boost;
+
+    if(keys.w) cam.velocity.addScaledVector(forward, cam.accel*mult);
+    if(keys.s) cam.velocity.addScaledVector(forward, -cam.accel*mult);
+    if(keys.a) cam.velocity.addScaledVector(right, -cam.accel*mult);
+    if(keys.d) cam.velocity.addScaledVector(right, cam.accel*mult);
+
     cam.velocity.multiplyScalar(cam.damping);
     camera.position.add(cam.velocity);
 
-    // Follow mode
-    if (follow) {
+    if(follow){
         const t = follow.position.clone();
-        const off = new THREE.Vector3(0, 140, -320).applyEuler(camera.rotation);
-        camera.position.lerp(t.add(off), 0.08);
+        const off = new THREE.Vector3(0,140,-320).applyEuler(camera.rotation);
+        camera.position.lerp(t.add(off),0.08);
         cam.velocity.set(0,0,0);
     }
 
-    // Render scene to render target
+    // Render scene to render target first
     renderer.setRenderTarget(rt);
     renderer.render(scene, camera);
     renderer.setRenderTarget(null);
-
-    // Update shader uniforms
-    postMat.uniforms.time.value += 0.016;
-
-    // Render post-processing quad
     renderer.render(postScene, postCam);
+    postMat.uniforms.time.value += 0.016;
 }
 animate();
-    
+
 addEventListener("resize", () => {
     renderer.setSize(innerWidth, innerHeight);
-    camera.aspect = innerWidth / innerHeight;
+    camera.aspect = innerWidth/innerHeight;
     camera.updateProjectionMatrix();
 });
 </script>
