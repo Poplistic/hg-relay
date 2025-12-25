@@ -7,59 +7,34 @@
 
 <style>
 body {
-	margin:0;
-	overflow:hidden;
-	background:#080000;
+	margin: 0;
+	overflow: hidden;
+	background: #080000;
 }
 canvas { display:block }
 
 /* ================= RED UI ================= */
 .ui {
-	position:absolute;
-	color:#ffd6d6;
-	font-family:system-ui,sans-serif;
-	background:linear-gradient(180deg,rgba(255,60,60,.22),rgba(80,0,0,.1));
-	backdrop-filter:blur(10px);
-	border:1px solid rgba(255,80,80,.45);
-	border-radius:12px;
-	padding:10px;
-	font-size:12px;
+	position: absolute;
+	color: #ffd6d6;
+	font-family: system-ui, sans-serif;
+	background: linear-gradient(180deg, rgba(255,60,60,.25), rgba(60,0,0,.15));
+	border: 1px solid rgba(255,80,80,.5);
+	border-radius: 12px;
+	padding: 10px;
+	font-size: 12px;
 	box-shadow:
-		0 0 20px rgba(255,60,60,.35),
+		0 0 20px rgba(255,60,60,.4),
 		inset 0 0 18px rgba(255,60,60,.15);
 }
-
-.ui b {
-	color:#fff;
-}
-
 .name {
-	cursor:pointer;
-	padding:4px 6px;
-	margin-top:2px;
-	border-radius:6px;
-	transition:background .15s, box-shadow .15s;
+	cursor: pointer;
+	padding: 4px 6px;
+	border-radius: 6px;
 }
 .name:hover {
-	background:rgba(255,80,80,.25);
-	box-shadow:0 0 10px rgba(255,80,80,.6);
-}
-
-a {
-	color:#ffd6d6;
-	text-decoration:none;
-}
-
-/* Button */
-.link {
-	position:absolute;
-	top:12px;
-	right:12px;
-	padding:10px 16px;
-	border-radius:10px;
-	background:linear-gradient(180deg,rgba(255,60,60,.28),rgba(80,0,0,.15));
-	border:1px solid rgba(255,80,80,.5);
-	box-shadow:0 0 18px rgba(255,60,60,.45);
+	background: rgba(255,80,80,.25);
+	box-shadow: 0 0 10px rgba(255,80,80,.6);
 }
 </style>
 
@@ -73,10 +48,6 @@ a {
 </head>
 
 <body>
-
-<a href="/fallen.html" target="_blank" class="link">Fallen Tributes</a>
-
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 <script type="module">
 import * as THREE from "three";
@@ -96,107 +67,93 @@ THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.autoClear = false;
 document.body.appendChild(renderer.domElement);
 
+/* ================= SCENE ================= */
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x080000);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 30000);
-camera.position.set(0,1200,1800);
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 20000);
+camera.position.set(0, 1200, 1800);
 
 /* ================= LIGHT ================= */
-scene.add(new THREE.AmbientLight(0xffffff,0.35));
-const sun = new THREE.DirectionalLight(0xffffff,1.2);
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
 sun.position.set(3000,6000,2000);
 scene.add(sun);
 
 /* ================= UI ================= */
-const tributeUI = createUI("10px","10px");
-function createUI(t,l){
-	const d=document.createElement("div");
-	d.className="ui";
-	d.style.top=t;
-	d.style.left=l;
-	document.body.appendChild(d);
-	return d;
-}
+const ui = document.createElement("div");
+ui.className = "ui";
+ui.style.top = "10px";
+ui.style.left = "10px";
+document.body.appendChild(ui);
 
-/* ================= CAMERA ================= */
+/* ================= CAMERA CONTROL ================= */
 const cam = {
-	vel:new THREE.Vector3(),
-	accel:2600,
-	damping:9,
-	max:1800,
-	yaw:0,
-	pitch:0,
-	input:{f:0,r:0,u:0},
-	follow:null
+	vel: new THREE.Vector3(),
+	accel: 2600,
+	damping: 9,
+	max: 1800,
+	yaw: 0,
+	pitch: 0,
+	input: { f:0, r:0 },
+	follow: null
 };
 
-/* ================= INPUT ================= */
-addEventListener("keydown",e=>{
+addEventListener("keydown", e=>{
 	if(e.code==="KeyW") cam.input.f=1;
 	if(e.code==="KeyS") cam.input.f=-1;
 	if(e.code==="KeyA") cam.input.r=-1;
 	if(e.code==="KeyD") cam.input.r=1;
-	if(e.code==="Space") cam.input.u=1;
-	if(e.code==="ShiftLeft") cam.input.u=-1;
 });
-addEventListener("keyup",e=>{
+addEventListener("keyup", e=>{
 	if(["KeyW","KeyS"].includes(e.code)) cam.input.f=0;
 	if(["KeyA","KeyD"].includes(e.code)) cam.input.r=0;
-	if(["Space","ShiftLeft"].includes(e.code)) cam.input.u=0;
 });
-
-renderer.domElement.addEventListener("mousedown",e=>{
-	if(e.button===2) renderer.domElement.requestPointerLock();
-});
-addEventListener("mousemove",e=>{
+renderer.domElement.addEventListener("mousedown", ()=>renderer.domElement.requestPointerLock());
+addEventListener("mousemove", e=>{
 	if(document.pointerLockElement){
 		cam.yaw -= e.movementX * 0.002;
-		cam.pitch = Math.max(-1.5, Math.min(1.5, cam.pitch - e.movementY * 0.002));
+		cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch - e.movementY * 0.002));
 	}
 });
-addEventListener("contextmenu",e=>e.preventDefault());
 
-/* ================= ARENA (SOLID) ================= */
+/* ================= ARENA ================= */
 const arenaMeshes=[];
-new OBJLoader().load("/arena.obj",obj=>{
-	obj.traverse(c=>{
-		if(c.isMesh){
-			c.geometry.computeVertexNormals();
-			c.geometry.computeBoundsTree();
-			c.material = new THREE.MeshStandardMaterial({
-				color:0x3a0a0a,
-				roughness:0.9,
-				metalness:0.05
+new OBJLoader().load("/arena.obj", obj=>{
+	obj.traverse(m=>{
+		if(m.isMesh){
+			m.geometry.computeBoundsTree();
+			m.material = new THREE.MeshStandardMaterial({
+				color: 0x3a0a0a,
+				roughness: 0.9
 			});
-			arenaMeshes.push(c);
+			arenaMeshes.push(m);
 		}
 	});
 	scene.add(obj);
 });
 
 /* ================= PLAYERS ================= */
-const group=new THREE.Group();
+const players = new Map();
+const group = new THREE.Group();
 scene.add(group);
-const players=new Map();
 
 function makePlayer(){
 	return new THREE.Mesh(
-		new THREE.SphereGeometry(10,24,24),
+		new THREE.SphereGeometry(10, 24, 24),
 		new THREE.MeshStandardMaterial({
-			color:0xff4444,
-			emissive:0x220000
+			color: 0xff4444,
+			emissive: 0x550000
 		})
 	);
 }
 
 async function updatePlayers(){
-	const data=await fetch("/map").then(r=>r.json());
-	tributeUI.innerHTML="<b>Tributes</b><br>";
+	const data = await fetch("/map").then(r=>r.json());
+	ui.innerHTML="<b>Tributes</b><br>";
 	const alive=new Set();
 
 	for(const p of data){
@@ -213,7 +170,7 @@ async function updatePlayers(){
 		d.className="name";
 		d.textContent=p.name;
 		d.onclick=()=>cam.follow=m;
-		tributeUI.appendChild(d);
+		ui.appendChild(d);
 	}
 
 	for(const [id,m] of players){
@@ -225,17 +182,73 @@ async function updatePlayers(){
 }
 setInterval(updatePlayers,200);
 
-/* ================= COLLISION ================= */
-const ray=new THREE.Raycaster();
-function collide(pos){
-	for(const m of arenaMeshes){
-		ray.set(pos,new THREE.Vector3(0,-1,0));
-		const hit=ray.intersectObject(m);
-		if(hit.length && hit[0].distance<30){
-			pos.y += 30 - hit[0].distance;
+/* ================= RENDER TARGETS ================= */
+const rtColor = new THREE.WebGLRenderTarget(innerWidth, innerHeight);
+rtColor.depthTexture = new THREE.DepthTexture();
+rtColor.depthTexture.type = THREE.UnsignedShortType;
+
+/* ================= SHADER PASS ================= */
+const postScene = new THREE.Scene();
+const postCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+
+const postMat = new THREE.ShaderMaterial({
+	uniforms:{
+		iTime:{value:0},
+		iResolution:{value:new THREE.Vector3(innerWidth,innerHeight,1)},
+		iChannel0:{value:rtColor.texture},
+		iDepth:{value:rtColor.depthTexture},
+		camNear:{value:camera.near},
+		camFar:{value:camera.far}
+	},
+	vertexShader:`
+		varying vec2 vUv;
+		void main(){
+			vUv=uv;
+			gl_Position=vec4(position.xy,0,1);
 		}
-	}
-}
+	`,
+	fragmentShader:`
+		precision highp float;
+		varying vec2 vUv;
+
+		uniform sampler2D iChannel0;
+		uniform sampler2D iDepth;
+		uniform vec3 iResolution;
+		uniform float iTime;
+		uniform float camNear;
+		uniform float camFar;
+
+		float linearize(float d){
+			float z = d*2.0-1.0;
+			return (2.0*camNear*camFar)/(camFar+camNear - z*(camFar-camNear));
+		}
+
+		void main(){
+			vec3 col = texture2D(iChannel0, vUv).rgb;
+			float depth = texture2D(iDepth, vUv).r;
+			float z = linearize(depth)/camFar;
+
+			/* DEPTH FOG */
+			float fog = smoothstep(0.15,0.9,z);
+			col = mix(col, vec3(0.15,0.0,0.0), fog);
+
+			/* PLAYER HIGHLIGHT BOOST */
+			col.r += smoothstep(0.6,1.0,col.r)*0.2;
+
+			/* SCANLINES */
+			float scan = sin(vUv.y * iResolution.y * 1.5);
+			col *= 0.94 + scan * 0.04;
+
+			/* VIGNETTE */
+			vec2 p=vUv*2.0-1.0;
+			col *= 1.0-dot(p,p)*0.35;
+
+			gl_FragColor = vec4(col,1.0);
+		}
+	`
+});
+
+postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), postMat));
 
 /* ================= LOOP ================= */
 let last=performance.now();
@@ -249,37 +262,44 @@ function animate(){
 	camera.rotation.x=cam.pitch;
 
 	if(cam.follow){
-		const target=cam.follow.position.clone();
-		const offset=new THREE.Vector3(0,140,-320).applyEuler(camera.rotation);
-		camera.position.lerp(target.add(offset),0.08);
+		const t=cam.follow.position.clone();
+		const off=new THREE.Vector3(0,140,-320).applyEuler(camera.rotation);
+		camera.position.lerp(t.add(off),0.08);
 	}else{
 		const dir=new THREE.Vector3();
 		camera.getWorldDirection(dir);
 		const right=new THREE.Vector3().crossVectors(dir,camera.up);
 
-		const accel=new THREE.Vector3()
+		const a=new THREE.Vector3()
 			.addScaledVector(dir,cam.input.f)
 			.addScaledVector(right,cam.input.r)
-			.addScaledVector(camera.up,cam.input.u)
 			.normalize()
 			.multiplyScalar(cam.accel*dt);
 
-		cam.vel.add(accel);
+		cam.vel.add(a);
 		cam.vel.multiplyScalar(Math.exp(-cam.damping*dt));
-		cam.vel.clampLength(0,cam.max);
 		camera.position.addScaledVector(cam.vel,dt);
 	}
 
-	collide(camera.position);
+	postMat.uniforms.iTime.value += dt;
+
+	renderer.setRenderTarget(rtColor);
+	renderer.clear();
 	renderer.render(scene,camera);
+
+	renderer.setRenderTarget(null);
+	renderer.clear();
+	renderer.render(postScene,postCam);
 }
 animate();
 
 /* ================= RESIZE ================= */
 addEventListener("resize",()=>{
+	renderer.setSize(innerWidth,innerHeight);
+	rtColor.setSize(innerWidth,innerHeight);
 	camera.aspect=innerWidth/innerHeight;
 	camera.updateProjectionMatrix();
-	renderer.setSize(innerWidth,innerHeight);
+	postMat.uniforms.iResolution.value.set(innerWidth,innerHeight,1);
 });
 </script>
 </body>
