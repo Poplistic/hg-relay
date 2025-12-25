@@ -111,8 +111,6 @@ const players = new Map();
 
 function makePlayer(){
 	const g = new THREE.Group();
-
-	// Player body
 	const body = new THREE.Mesh(
 		new THREE.SphereGeometry(10,24,24),
 		new THREE.MeshStandardMaterial({
@@ -122,18 +120,6 @@ function makePlayer(){
 		})
 	);
 	g.add(body);
-
-	// Direction line
-	const dirMaterial = new THREE.LineBasicMaterial({ color: 0xffa0aa });
-	const points = [];
-	points.push(new THREE.Vector3(0, 0, 0));     // start at player center
-	points.push(new THREE.Vector3(0, 0, -100));  // forward line
-	const dirGeometry = new THREE.BufferGeometry().setFromPoints(points);
-	const dirLine = new THREE.Line(dirGeometry, dirMaterial);
-	dirLine.rotation.x = Math.PI / 2; // align with world
-	g.add(dirLine);
-
-	g.userData = { dirLine };
 	return g;
 }
 
@@ -145,11 +131,6 @@ async function updatePlayers(){
 	ui.innerHTML="<b>Tributes</b>";
 	const alive = new Set();
 
-	const m = players.get(p.id);
-	m.position.set(p.x, p.y+20, p.z);
-	m.rotation.y = p.yaw;
-	m.userData.dirLine.rotation.z = p.pitch;
-	
 	for(const p of data){
 		alive.add(p.id);
 		if(!players.has(p.id)){
@@ -190,7 +171,6 @@ const cam = {
 const keys = { w:false,a:false,s:false,d:false,shift:false };
 let rotating=false;
 
-/* Mouse */
 renderer.domElement.addEventListener("mousedown",e=>{
 	if(e.button===0){
 		rotating=true;
@@ -208,7 +188,6 @@ addEventListener("mousemove",e=>{
 	}
 });
 
-/* Keyboard */
 addEventListener("keydown",e=>{
 	if(e.code==="KeyW")keys.w=true;
 	if(e.code==="KeyA")keys.a=true;
@@ -238,7 +217,8 @@ const postMat = new THREE.ShaderMaterial({
 		tDepth:{value:rt.depthTexture},
 		res:{value:new THREE.Vector2(innerWidth,innerHeight)},
 		near:{value:camera.near},
-		far:{value:camera.far}
+		far:{value:camera.far},
+		time:{value:0}
 	},
 	vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0,1);}`,
 	fragmentShader:`
@@ -247,19 +227,39 @@ varying vec2 vUv;
 uniform sampler2D tColor,tDepth;
 uniform vec2 res;
 uniform float near,far;
+uniform float time;
+
 float lin(float d){
-	float z=d*2.-1.;
-	return (2.*near*far)/(far+near-z*(far-near));
+	float z = d*2.0 - 1.0;
+	return (2.0 * near * far) / (far + near - z*(far-near));
 }
+
 void main(){
-	vec3 col=texture2D(tColor,vUv).rgb;
-	float d=lin(texture2D(tDepth,vUv).r)/far;
-	vec2 px=1./res;
-	float e=abs(d-lin(texture2D(tDepth,vUv+vec2(px.x,0)).r)/far)
-	       +abs(d-lin(texture2D(tDepth,vUv+vec2(0,px.y)).r)/far);
-	col+=e*vec3(1.,.3,.4);
-	col=mix(col,vec3(.18,.02,.04),smoothstep(.25,.9,d));
-	gl_FragColor=vec4(col,1.);
+	vec3 col = texture2D(tColor,vUv).rgb;
+
+	// Depth
+	float depth = lin(texture2D(tDepth,vUv).r)/far;
+
+	// Fog
+	vec3 fogColor = vec3(0.08,0.02,0.04);
+	col = mix(col, fogColor, smoothstep(0.3, 1.0, depth));
+
+	// Edge glow
+	vec2 px = 1.0 / res;
+	float edge = abs(depth - lin(texture2D(tDepth,vUv + vec2(px.x,0)).r)/far)
+	           + abs(depth - lin(texture2D(tDepth,vUv + vec2(0,px.y)).r)/far);
+	col += edge * vec3(1.0,0.3,0.4);
+
+	// Scanlines
+	float scan = sin(vUv.y * res.y * 1.5) * 0.04;
+	col -= scan;
+
+	// Procedural floor effect
+	vec2 center = vUv - 0.5;
+	float radius = length(center);
+	col += 0.03 * sin(radius * 30.0 - time * 2.0) * vec3(1.0,0.2,0.3);
+
+	gl_FragColor = vec4(col,1.0);
 }`
 });
 postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),postMat));
@@ -293,6 +293,9 @@ function animate(){
 		camera.position.lerp(t.add(off),.08);
 		cam.velocity.set(0,0,0);
 	}
+
+	// Animate shader
+	postMat.uniforms.time.value = performance.now() * 0.001;
 
 	renderer.setRenderTarget(rt);
 	renderer.render(scene,camera);
