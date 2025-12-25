@@ -6,35 +6,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-body {
-	margin: 0;
-	overflow: hidden;
-	background: #080000;
+html,body{
+	margin:0;
+	width:100%;
+	height:100%;
+	overflow:hidden;
+	background:radial-gradient(circle at 50% 15%,#2b0f14,#090205);
+	font-family:system-ui,Segoe UI,sans-serif;
 }
-canvas { display:block }
-
-/* ================= RED UI ================= */
-.ui {
-	position: absolute;
-	color: #ffd6d6;
-	font-family: system-ui, sans-serif;
-	background: linear-gradient(180deg, rgba(255,60,60,.25), rgba(60,0,0,.15));
-	border: 1px solid rgba(255,80,80,.5);
-	border-radius: 12px;
-	padding: 10px;
-	font-size: 12px;
-	box-shadow:
-		0 0 20px rgba(255,60,60,.4),
-		inset 0 0 18px rgba(255,60,60,.15);
+#hud{
+	position:fixed;
+	top:16px;
+	left:16px;
+	z-index:10;
 }
-.name {
-	cursor: pointer;
-	padding: 4px 6px;
-	border-radius: 6px;
+.ui{
+	min-width:180px;
+	color:#ffe8ee;
+	background:linear-gradient(180deg,rgba(255,130,150,.25),rgba(90,20,30,.18));
+	backdrop-filter:blur(14px);
+	border:1px solid rgba(255,160,170,.45);
+	border-radius:16px;
+	padding:12px;
+	box-shadow:0 14px 40px rgba(255,70,90,.3);
 }
-.name:hover {
-	background: rgba(255,80,80,.25);
-	box-shadow: 0 0 10px rgba(255,80,80,.6);
+.ui b{
+	font-size:11px;
+	letter-spacing:.12em;
+	text-transform:uppercase;
+}
+.name{
+	margin-top:4px;
+	padding:6px 8px;
+	border-radius:10px;
+	cursor:pointer;
+	background:rgba(255,120,140,.08);
+}
+.name:hover{
+	background:rgba(255,140,160,.28);
 }
 </style>
 
@@ -48,258 +57,207 @@ canvas { display:block }
 </head>
 
 <body>
+<div id="hud"><div class="ui" id="ui"></div></div>
 
 <script type="module">
 import * as THREE from "three";
-import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
-import {
-	acceleratedRaycast,
-	computeBoundsTree,
-	disposeBoundsTree
-} from "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.4/build/index.module.js";
-
-/* ================= BVH ================= */
-THREE.Mesh.prototype.raycast = acceleratedRaycast;
-THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
-THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 
 /* ================= RENDERER ================= */
 const renderer = new THREE.WebGLRenderer({ antialias:true });
-renderer.setSize(innerWidth, innerHeight);
+renderer.setSize(innerWidth,innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
-renderer.autoClear = false;
+renderer.autoClear=false;
 document.body.appendChild(renderer.domElement);
 
 /* ================= SCENE ================= */
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x080000);
+scene.background = new THREE.Color(0x120608);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 20000);
-camera.position.set(0, 1200, 1800);
+const camera = new THREE.PerspectiveCamera(60,innerWidth/innerHeight,1,20000);
+camera.position.set(0,1200,1800);
 
-/* ================= LIGHT ================= */
-scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+scene.add(new THREE.AmbientLight(0xffffff,.55));
+const sun=new THREE.DirectionalLight(0xffe2e6,1.4);
 sun.position.set(3000,6000,2000);
 scene.add(sun);
 
+/* ================= FRUSTUM ================= */
+const frustum=new THREE.CameraHelper(camera);
+frustum.material.transparent=true;
+frustum.material.opacity=.35;
+scene.add(frustum);
+
 /* ================= UI ================= */
-const ui = document.createElement("div");
-ui.className = "ui";
-ui.style.top = "10px";
-ui.style.left = "10px";
-document.body.appendChild(ui);
-
-/* ================= CAMERA CONTROL ================= */
-const cam = {
-	vel: new THREE.Vector3(),
-	accel: 2600,
-	damping: 9,
-	max: 1800,
-	yaw: 0,
-	pitch: 0,
-	input: { f:0, r:0 },
-	follow: null
-};
-
-addEventListener("keydown", e=>{
-	if(e.code==="KeyW") cam.input.f=1;
-	if(e.code==="KeyS") cam.input.f=-1;
-	if(e.code==="KeyA") cam.input.r=-1;
-	if(e.code==="KeyD") cam.input.r=1;
-});
-addEventListener("keyup", e=>{
-	if(["KeyW","KeyS"].includes(e.code)) cam.input.f=0;
-	if(["KeyA","KeyD"].includes(e.code)) cam.input.r=0;
-});
-renderer.domElement.addEventListener("mousedown", ()=>renderer.domElement.requestPointerLock());
-addEventListener("mousemove", e=>{
-	if(document.pointerLockElement){
-		cam.yaw -= e.movementX * 0.002;
-		cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch - e.movementY * 0.002));
-	}
-});
-
-/* ================= ARENA ================= */
-const arenaMeshes=[];
-new OBJLoader().load("/arena.obj", obj=>{
-	obj.traverse(m=>{
-		if(m.isMesh){
-			m.geometry.computeBoundsTree();
-			m.material = new THREE.MeshStandardMaterial({
-				color: 0x3a0a0a,
-				roughness: 0.9
-			});
-			arenaMeshes.push(m);
-		}
-	});
-	scene.add(obj);
-});
+const ui=document.getElementById("ui");
 
 /* ================= PLAYERS ================= */
-const players = new Map();
-const group = new THREE.Group();
-scene.add(group);
+const players=new Map();
+const trails=new THREE.Group();
+scene.add(trails);
 
 function makePlayer(){
-	return new THREE.Mesh(
-		new THREE.SphereGeometry(10, 24, 24),
+	const g=new THREE.Group();
+
+	const body=new THREE.Mesh(
+		new THREE.SphereGeometry(10,24,24),
 		new THREE.MeshStandardMaterial({
-			color: 0xff4444,
-			emissive: 0x550000
+			color:0xff6b7a,
+			emissive:0xff2a40,
+			emissiveIntensity:.6
 		})
 	);
+
+	const vision=new THREE.Mesh(
+		new THREE.ConeGeometry(160,420,48,1,true),
+		new THREE.MeshBasicMaterial({
+			color:0xff5566,
+			transparent:true,
+			opacity:.08,
+			side:THREE.DoubleSide,
+			depthWrite:false
+		})
+	);
+	vision.rotation.x=Math.PI/2;
+	vision.position.z=-210;
+
+	g.add(body);
+	g.add(vision);
+	g.userData.vision=vision;
+	return g;
 }
 
-async function updatePlayers(){
-	const data = await fetch("/map").then(r=>r.json());
-	ui.innerHTML="<b>Tributes</b><br>";
-	const alive=new Set();
+function addTrail(pos){
+	const m=new THREE.Mesh(
+		new THREE.PlaneGeometry(36,36),
+		new THREE.MeshBasicMaterial({
+			color:0xff4058,
+			transparent:true,
+			opacity:.12,
+			depthWrite:false
+		})
+	);
+	m.rotation.x=-Math.PI/2;
+	m.position.copy(pos);
+	trails.add(m);
+	setTimeout(()=>trails.remove(m),3000);
+}
 
+/* ================= UPDATE ================= */
+async function updatePlayers(){
+	const data=await fetch("/map").then(r=>r.json());
+	ui.innerHTML="<b>Tributes</b>";
+
+	const alive=new Set();
 	for(const p of data){
 		alive.add(p.id);
 		if(!players.has(p.id)){
 			const m=makePlayer();
-			group.add(m);
+			scene.add(m);
 			players.set(p.id,m);
 		}
 		const m=players.get(p.id);
+		addTrail(m.position.clone());
+
 		m.position.set(p.x,p.y,p.z);
+		m.rotation.y=p.yaw;
+		m.userData.vision.rotation.z=p.pitch;
 
 		const d=document.createElement("div");
 		d.className="name";
 		d.textContent=p.name;
-		d.onclick=()=>cam.follow=m;
+		d.onclick=()=>follow=m;
 		ui.appendChild(d);
 	}
-
 	for(const [id,m] of players){
 		if(!alive.has(id)){
-			group.remove(m);
+			scene.remove(m);
 			players.delete(id);
 		}
 	}
 }
 setInterval(updatePlayers,200);
 
-/* ================= RENDER TARGETS ================= */
-const rtColor = new THREE.WebGLRenderTarget(innerWidth, innerHeight);
-rtColor.depthTexture = new THREE.DepthTexture();
-rtColor.depthTexture.type = THREE.UnsignedShortType;
+/* ================= CAMERA CONTROL ================= */
+let follow=null;
+const cam={yaw:0,pitch:0};
 
-/* ================= SHADER PASS ================= */
-const postScene = new THREE.Scene();
-const postCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
-
-const postMat = new THREE.ShaderMaterial({
-	uniforms:{
-		iTime:{value:0},
-		iResolution:{value:new THREE.Vector3(innerWidth,innerHeight,1)},
-		iChannel0:{value:rtColor.texture},
-		iDepth:{value:rtColor.depthTexture},
-		camNear:{value:camera.near},
-		camFar:{value:camera.far}
-	},
-	vertexShader:`
-		varying vec2 vUv;
-		void main(){
-			vUv=uv;
-			gl_Position=vec4(position.xy,0,1);
-		}
-	`,
-	fragmentShader:`
-		precision highp float;
-		varying vec2 vUv;
-
-		uniform sampler2D iChannel0;
-		uniform sampler2D iDepth;
-		uniform vec3 iResolution;
-		uniform float iTime;
-		uniform float camNear;
-		uniform float camFar;
-
-		float linearize(float d){
-			float z = d*2.0-1.0;
-			return (2.0*camNear*camFar)/(camFar+camNear - z*(camFar-camNear));
-		}
-
-		void main(){
-			vec3 col = texture2D(iChannel0, vUv).rgb;
-			float depth = texture2D(iDepth, vUv).r;
-			float z = linearize(depth)/camFar;
-
-			/* DEPTH FOG */
-			float fog = smoothstep(0.15,0.9,z);
-			col = mix(col, vec3(0.15,0.0,0.0), fog);
-
-			/* PLAYER HIGHLIGHT BOOST */
-			col.r += smoothstep(0.6,1.0,col.r)*0.2;
-
-			/* SCANLINES */
-			float scan = sin(vUv.y * iResolution.y * 1.5);
-			col *= 0.94 + scan * 0.04;
-
-			/* VIGNETTE */
-			vec2 p=vUv*2.0-1.0;
-			col *= 1.0-dot(p,p)*0.35;
-
-			gl_FragColor = vec4(col,1.0);
-		}
-	`
+renderer.domElement.addEventListener("mousedown",()=>renderer.domElement.requestPointerLock());
+addEventListener("mousemove",e=>{
+	if(document.pointerLockElement){
+		cam.yaw-=e.movementX*.002;
+		cam.pitch=Math.max(-1.4,Math.min(1.4,cam.pitch-e.movementY*.002));
+	}
 });
 
-postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), postMat));
+/* ================= POST FX ================= */
+const rt=new THREE.WebGLRenderTarget(innerWidth,innerHeight);
+rt.depthTexture=new THREE.DepthTexture();
+
+const postScene=new THREE.Scene();
+const postCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+
+const postMat=new THREE.ShaderMaterial({
+	uniforms:{
+		tColor:{value:rt.texture},
+		tDepth:{value:rt.depthTexture},
+		res:{value:new THREE.Vector2(innerWidth,innerHeight)},
+		near:{value:camera.near},
+		far:{value:camera.far}
+	},
+	vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0,1);}`,
+	fragmentShader:`
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tColor,tDepth;
+uniform vec2 res;
+uniform float near,far;
+
+float lin(float d){
+	float z=d*2.-1.;
+	return (2.*near*far)/(far+near-z*(far-near));
+}
+void main(){
+	vec3 col=texture2D(tColor,vUv).rgb;
+	float d=lin(texture2D(tDepth,vUv).r)/far;
+	vec2 px=1./res;
+	float e=abs(d-lin(texture2D(tDepth,vUv+vec2(px.x,0)).r)/far)
+	       +abs(d-lin(texture2D(tDepth,vUv+vec2(0,px.y)).r)/far);
+	col+=e*vec3(1.,.4,.5);
+	col=mix(col,vec3(.35,.12,.16),smoothstep(.3,.95,d));
+	gl_FragColor=vec4(col,1.);
+}`
+});
+postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),postMat));
 
 /* ================= LOOP ================= */
-let last=performance.now();
 function animate(){
 	requestAnimationFrame(animate);
-	const dt=(performance.now()-last)/1000;
-	last=performance.now();
 
 	camera.rotation.order="YXZ";
 	camera.rotation.y=cam.yaw;
 	camera.rotation.x=cam.pitch;
 
-	if(cam.follow){
-		const t=cam.follow.position.clone();
+	if(follow){
+		const t=follow.position.clone();
 		const off=new THREE.Vector3(0,140,-320).applyEuler(camera.rotation);
-		camera.position.lerp(t.add(off),0.08);
-	}else{
-		const dir=new THREE.Vector3();
-		camera.getWorldDirection(dir);
-		const right=new THREE.Vector3().crossVectors(dir,camera.up);
-
-		const a=new THREE.Vector3()
-			.addScaledVector(dir,cam.input.f)
-			.addScaledVector(right,cam.input.r)
-			.normalize()
-			.multiplyScalar(cam.accel*dt);
-
-		cam.vel.add(a);
-		cam.vel.multiplyScalar(Math.exp(-cam.damping*dt));
-		camera.position.addScaledVector(cam.vel,dt);
+		camera.position.lerp(t.add(off),.08);
 	}
 
-	postMat.uniforms.iTime.value += dt;
+	frustum.update();
 
-	renderer.setRenderTarget(rtColor);
-	renderer.clear();
+	renderer.setRenderTarget(rt);
 	renderer.render(scene,camera);
-
 	renderer.setRenderTarget(null);
-	renderer.clear();
 	renderer.render(postScene,postCam);
 }
 animate();
 
-/* ================= RESIZE ================= */
 addEventListener("resize",()=>{
 	renderer.setSize(innerWidth,innerHeight);
-	rtColor.setSize(innerWidth,innerHeight);
+	rt.setSize(innerWidth,innerHeight);
 	camera.aspect=innerWidth/innerHeight;
 	camera.updateProjectionMatrix();
-	postMat.uniforms.iResolution.value.set(innerWidth,innerHeight,1);
+	postMat.uniforms.res.value.set(innerWidth,innerHeight);
 });
 </script>
 </body>
