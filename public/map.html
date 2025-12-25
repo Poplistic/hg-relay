@@ -6,17 +6,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-	body {
-		margin:0;
-		overflow:hidden;
-		background:black;
-	}
+	body { margin:0; overflow:hidden; background:black; }
 	canvas { display:block }
 
 	.ui {
 		position:absolute;
 		color:white;
-		font-family:system-ui, sans-serif;
+		font-family:system-ui,sans-serif;
 		background:rgba(20,20,20,.65);
 		backdrop-filter: blur(6px);
 		border:1px solid rgba(255,255,255,.1);
@@ -27,6 +23,8 @@
 	}
 
 	input {
+		width:100%;
+		box-sizing:border-box;
 		background:#111;
 		color:white;
 		border:1px solid #333;
@@ -34,19 +32,8 @@
 		padding:4px;
 	}
 
-	#input {
-		width:100%;
-		box-sizing:border-box;
-		display:block;
-	}
-
-	#log div {
-		opacity:1;
-		transition:opacity 1.2s ease;
-	}
-	#log.fade div {
-		opacity:0;
-	}
+	#log div { transition:opacity 1.2s ease }
+	#log.fade div { opacity:0 }
 </style>
 
 <script type="importmap">
@@ -59,7 +46,6 @@
 </head>
 
 <body>
-
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 <script type="module">
@@ -68,34 +54,21 @@ import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/exampl
 import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 
 /* ======================
-   RENDERER
+   BASIC SETUP
 ====================== */
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-/* ======================
-   SCENE + FOG
-====================== */
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x050508);
 scene.fog = new THREE.FogExp2(0x050508, 0.000045);
 
-/* ======================
-   CAMERA
-====================== */
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 20000);
 camera.position.set(2000,2000,2000);
 
-/* ======================
-   CONTROLS
-====================== */
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
@@ -103,15 +76,9 @@ controls.enableDamping = true;
    LIGHTING
 ====================== */
 scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-
 const sun = new THREE.DirectionalLight(0xffffff, 1.1);
 sun.position.set(3000,6000,2000);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048,2048);
-sun.shadow.camera.left = -6000;
-sun.shadow.camera.right = 6000;
-sun.shadow.camera.top = 6000;
-sun.shadow.camera.bottom = -6000;
 scene.add(sun);
 
 /* ======================
@@ -124,18 +91,11 @@ scene.add(playerGroup, spectatorGroup);
 /* ======================
    LOAD ARENA
 ====================== */
-const loader = new OBJLoader();
 let terrainMesh = null;
-
-loader.load("arena.obj", obj=>{
+new OBJLoader().load("arena.obj", obj=>{
 	obj.traverse(m=>{
-		if (m.isMesh) {
-			m.castShadow = true;
-			m.receiveShadow = true;
-			m.material.side = THREE.DoubleSide;
-		}
+		if(m.isMesh){ m.castShadow=true; m.receiveShadow=true; }
 	});
-	obj.scale.set(1,1,1);
 	scene.add(obj);
 	terrainMesh = obj;
 });
@@ -155,7 +115,6 @@ function ui(t,l,r,b){
 }
 
 const tributeUI = ui("10px","10px");
-const killUI = ui("10px",null,"10px");
 const spectatorUI = ui(null,null,"10px","160px");
 const chatUI = ui(null,"10px",null,"10px");
 
@@ -165,172 +124,142 @@ chatUI.innerHTML = `
 `;
 
 /* ======================
-   NAME FILTER
+   BAD NAME LOADING (FIXED)
 ====================== */
 let badNames = [];
-fetch("/badnames.txt")
+await fetch("/badnames.txt")
 	.then(r=>r.text())
 	.then(t=>{
 		badNames = t.split("\n").map(w=>w.trim().toLowerCase()).filter(Boolean);
 	});
 
-function isNameClean(n){
-	const s=n.toLowerCase();
-	return !badNames.some(b=>s.includes(b));
+function isNameClean(name){
+	const n = name.toLowerCase();
+	return !badNames.some(b => n.includes(b));
 }
 
 /* ======================
-   SOCKET
+   SOCKET + NAME PROMPT
 ====================== */
 const socket = io();
+let spectatorName = null;
 
-/* ======================
-   SPECTATOR NAME
-====================== */
-let spectatorName=null;
-(function promptName(){
-	while(!spectatorName){
-		const n=prompt("Choose a spectator name:");
-		if(!n||n.length<3||n.length>16)continue;
-		if(!isNameClean(n)){ alert("Name not allowed"); continue; }
-		spectatorName=n;
-		socket.emit("spectator:name", n);
-	}
-})();
-
-/* ======================
-   CHAT
-====================== */
-let lastChatTime=0;
-const CHAT_COOLDOWN=1200;
-let chatFadeTimer=null;
-
-function resetChatFade(){
-	const log=document.getElementById("log");
-	log.classList.remove("fade");
-	clearTimeout(chatFadeTimer);
-	chatFadeTimer=setTimeout(()=>log.classList.add("fade"),8000);
+while(!spectatorName){
+	const n = prompt("Choose a spectator name:");
+	if(!n || n.length<3 || n.length>16) continue;
+	if(!isNameClean(n)){ alert("Name not allowed"); continue; }
+	spectatorName = n;
+	socket.emit("spectator:name", n);
 }
-
-document.getElementById("input").addEventListener("keydown",e=>{
-	if(e.key!=="Enter"||!e.target.value)return;
-	const now=performance.now();
-	if(now-lastChatTime<CHAT_COOLDOWN)return;
-	lastChatTime=now;
-	socket.emit("chat:send",e.target.value);
-	e.target.value="";
-	resetChatFade();
-});
-
-socket.on("chat:msg",m=>{
-	const log=document.getElementById("log");
-	log.innerHTML+=`<div><b>${m.from}:</b> ${m.msg}</div>`;
-	log.scrollTop=log.scrollHeight;
-	resetChatFade();
-});
 
 /* ======================
    NAME TAG
 ====================== */
-function makeNameTag(text,color="#fff"){
+function makeTextSprite(text,color){
 	const c=document.createElement("canvas");
-	c.width=256;c.height=64;
+	c.width=128;c.height=64;
 	const x=c.getContext("2d");
-	x.fillStyle="rgba(0,0,0,.55)";
-	x.fillRect(0,0,256,64);
-	x.fillStyle=color;
 	x.font="28px system-ui";
 	x.textAlign="center";
 	x.textBaseline="middle";
-	x.fillText(text,128,32);
+	x.fillStyle="rgba(0,0,0,.6)";
+	x.fillRect(0,0,128,64);
+	x.fillStyle=color;
+	x.fillText(text,64,32);
 	const t=new THREE.CanvasTexture(c);
 	const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true}));
-	s.scale.set(160,40,1);
-	s.position.y=80;
+	s.scale.set(80,40,1);
 	return s;
 }
 
 /* ======================
-   PLAYER
+   PLAYER CREATION
 ====================== */
-const players=new Map();
+const players = new Map();
+
 function makePlayer(name){
-	const m=new THREE.Mesh(
+	const m = new THREE.Mesh(
 		new THREE.SphereGeometry(10,16,16),
-		new THREE.MeshStandardMaterial({color:0x00ff88,emissive:0x003322})
+		new THREE.MeshStandardMaterial({ color:0x00ff00 })
 	);
-	const tag=makeNameTag(name);
+
+	/* Name tag */
+	const tag = makeTextSprite(name,"#fff");
+	tag.position.y = 80;
 	m.add(tag);
-	m.userData.tag=tag;
+	m.userData.tag = tag;
+
+	/* Direction arrow ">" */
+	const arrow = makeTextSprite(">", "#ffff00");
+	arrow.position.set(0,40,0);
+	m.add(arrow);
+	m.userData.arrow = arrow;
+
 	return m;
 }
 
 /* ======================
    UPDATE PLAYERS
 ====================== */
-const ray=new THREE.Raycaster();
-const down=new THREE.Vector3(0,-1,0);
-const tmp=new THREE.Vector3();
+const ray = new THREE.Raycaster();
+const down = new THREE.Vector3(0,-1,0);
+const tmp = new THREE.Vector3();
+const look = new THREE.Vector3();
 
 async function updatePlayers(){
-	const data=await fetch("/map").then(r=>r.json());
+	const data = await fetch("/map").then(r=>r.json());
 	tributeUI.innerHTML="<b>Tributes</b><br>"+data.map(p=>p.name).join("<br>");
-	const active=new Set();
+	const active = new Set();
 
 	for(const p of data){
 		active.add(p.id);
 		if(!players.has(p.id)){
-			const m=makePlayer(p.name);
+			const m = makePlayer(p.name);
 			playerGroup.add(m);
 			players.set(p.id,m);
 		}
-		const m=players.get(p.id);
+
+		const m = players.get(p.id);
+
+		/* Terrain snap */
 		tmp.set(p.x,5000,p.z);
 		ray.set(tmp,down);
-		const hit=terrainMesh?ray.intersectObject(terrainMesh,true)[0]:null;
-		m.position.set(p.x,hit?hit.point.y+6:6,p.z);
+		const hit = terrainMesh ? ray.intersectObject(terrainMesh,true)[0] : null;
+		m.position.set(p.x, hit?hit.point.y+6:6, p.z);
+
+		/* Health color */
+		const hp = p.health ?? 100;
+		if(hp > 66) m.material.color.set(0x00ff00);
+		else if(hp > 33) m.material.color.set(0xffaa00);
+		else m.material.color.set(0xff0000);
+
+		/* Direction arrow */
+		if(p.lookX !== undefined){
+			look.set(p.lookX,0,p.lookZ);
+			if(look.lengthSq()>0.001){
+				m.userData.arrow.rotation.z = -Math.atan2(look.x, look.z);
+			}
+		}
 	}
-	for(const [id,m] of players)
-		if(!active.has(id)){playerGroup.remove(m);players.delete(id);}
+
+	for(const [id,m] of players){
+		if(!active.has(id)){
+			playerGroup.remove(m);
+			players.delete(id);
+		}
+	}
 }
 setInterval(updatePlayers,200);
 
 /* ======================
-   SPECTATORS
-====================== */
-socket.on("spectators:init",list=>{
-	spectatorGroup.clear();
-	spectatorUI.innerHTML="<b>Spectators</b><br>";
-	list.forEach(s=>{
-		const m=new THREE.Mesh(
-			new THREE.SphereGeometry(12),
-			new THREE.MeshStandardMaterial({color:s.color})
-		);
-		const tag=makeNameTag(s.name,"#aaccff");
-		m.add(tag);
-		spectatorGroup.add(m);
-		spectatorUI.innerHTML+=`<div>● ${s.name}</div>`;
-	});
-});
-
-/* ======================
-   FOG HEIGHT
-====================== */
-function updateFog(){
-	scene.fog.density=0.000045*
-		THREE.MathUtils.clamp(camera.position.y/4000,0.2,1.4);
-}
-
-/* ======================
-   LOOP
+   BILLBOARD TAGS
 ====================== */
 function animate(){
 	requestAnimationFrame(animate);
-	updateFog();
-	controls.update();
 	for(const g of [playerGroup,spectatorGroup])
 		for(const m of g.children)
 			m.children.forEach(c=>c.isSprite&&c.quaternion.copy(camera.quaternion));
+	controls.update();
 	renderer.render(scene,camera);
 }
 animate();
