@@ -103,6 +103,38 @@ new OBJLoader().load("/arena.obj", obj=>{
 	arenaGroup.add(obj);
 });
 
+/* ================= FLOOR WITH SCANLINES ================= */
+const floorGeo = new THREE.PlaneGeometry(5000, 5000, 1, 1);
+const floorMat = new THREE.ShaderMaterial({
+	uniforms: {
+		time: { value: 0 }
+	},
+	vertexShader: `
+		varying vec2 vUv;
+		void main(){
+			vUv = uv;
+			gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+		}
+	`,
+	fragmentShader: `
+		precision highp float;
+		varying vec2 vUv;
+		uniform float time;
+
+		void main(){
+			vec3 col = vec3(0.08,0.02,0.04); // base floor color
+			float scan = sin(vUv.x*200.0 + time*5.0) * 0.03; // scanline effect along X
+			col += scan;
+			gl_FragColor = vec4(col,1.0);
+		}
+	`,
+	side: THREE.DoubleSide
+});
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI/2;
+floor.position.y = 0;
+scene.add(floor);
+
 /* ================= UI ================= */
 const ui = document.getElementById("ui");
 
@@ -111,6 +143,8 @@ const players = new Map();
 
 function makePlayer(){
 	const g = new THREE.Group();
+
+	// Player body
 	const body = new THREE.Mesh(
 		new THREE.SphereGeometry(10,24,24),
 		new THREE.MeshStandardMaterial({
@@ -120,11 +154,25 @@ function makePlayer(){
 		})
 	);
 	g.add(body);
+
+	// Directional line
+	const dirMat = new THREE.LineBasicMaterial({
+		color:0xff6b7a,
+		transparent:true,
+		opacity:0.7
+	});
+	const points = [new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-80)];
+	const dirGeo = new THREE.BufferGeometry().setFromPoints(points);
+	const dirLine = new THREE.Line(dirGeo, dirMat);
+	dirLine.rotation.x = Math.PI/2;
+	g.add(dirLine);
+	g.userData.dirLine = dirLine;
+
 	return g;
 }
 
 /* ================= UPDATE ================= */
-let follow=null;
+let follow = null;
 
 async function updatePlayers(){
 	const data = await fetch("/map").then(r=>r.json());
@@ -142,12 +190,17 @@ async function updatePlayers(){
 		m.position.set(p.x,p.y+20,p.z);
 		m.rotation.y = p.yaw;
 
+		if(m.userData.dirLine){
+			m.userData.dirLine.rotation.z = p.pitch;
+		}
+
 		const d=document.createElement("div");
 		d.className="name";
 		d.textContent=p.name;
 		d.onclick=()=>follow=m;
 		ui.appendChild(d);
 	}
+
 	for(const [id,m] of players){
 		if(!alive.has(id)){
 			scene.remove(m);
@@ -158,16 +211,7 @@ async function updatePlayers(){
 setInterval(updatePlayers,200);
 
 /* ================= CAMERA CONTROLS ================= */
-const cam = {
-	yaw:0,
-	pitch:0,
-	velocity:new THREE.Vector3(),
-	accel:2.4,
-	damping:0.88,
-	baseSpeed:18,
-	boost:3.0,
-};
-
+const cam = { yaw:0, pitch:0, velocity:new THREE.Vector3(), accel:2.4, damping:0.88, baseSpeed:18, boost:3.0 };
 const keys = { w:false,a:false,s:false,d:false,shift:false };
 let rotating=false;
 
@@ -177,17 +221,13 @@ renderer.domElement.addEventListener("mousedown",e=>{
 		renderer.domElement.requestPointerLock();
 	}
 });
-addEventListener("mouseup",()=>{
-	rotating=false;
-	document.exitPointerLock();
-});
+addEventListener("mouseup",()=>{ rotating=false; document.exitPointerLock(); });
 addEventListener("mousemove",e=>{
 	if(rotating && document.pointerLockElement){
-		cam.yaw   -= e.movementX*0.002;
+		cam.yaw -= e.movementX*0.002;
 		cam.pitch = Math.max(-1.4,Math.min(1.4,cam.pitch-e.movementY*0.002));
 	}
 });
-
 addEventListener("keydown",e=>{
 	if(e.code==="KeyW")keys.w=true;
 	if(e.code==="KeyA")keys.a=true;
@@ -204,7 +244,7 @@ addEventListener("keyup",e=>{
 	if(e.code==="ShiftLeft")keys.shift=false;
 });
 
-/* ================= POST FX ================= */
+/* ================= POST FX (depth/fog/glow) ================= */
 const rt = new THREE.WebGLRenderTarget(innerWidth,innerHeight);
 rt.depthTexture = new THREE.DepthTexture();
 
@@ -231,33 +271,20 @@ uniform float time;
 
 float lin(float d){
 	float z = d*2.0 - 1.0;
-	return (2.0 * near * far) / (far + near - z*(far-near));
+	return (2.0*near*far)/(far + near - z*(far-near));
 }
 
 void main(){
 	vec3 col = texture2D(tColor,vUv).rgb;
-
-	// Depth
 	float depth = lin(texture2D(tDepth,vUv).r)/far;
 
-	// Fog
 	vec3 fogColor = vec3(0.08,0.02,0.04);
-	col = mix(col, fogColor, smoothstep(0.3, 1.0, depth));
+	col = mix(col,fogColor,smoothstep(0.3,1.0,depth));
 
-	// Edge glow
-	vec2 px = 1.0 / res;
-	float edge = abs(depth - lin(texture2D(tDepth,vUv + vec2(px.x,0)).r)/far)
-	           + abs(depth - lin(texture2D(tDepth,vUv + vec2(0,px.y)).r)/far);
-	col += edge * vec3(1.0,0.3,0.4);
-
-	// Scanlines
-	float scan = sin(vUv.y * res.y * 1.5) * 0.04;
-	col -= scan;
-
-	// Procedural floor effect
-	vec2 center = vUv - 0.5;
-	float radius = length(center);
-	col += 0.03 * sin(radius * 30.0 - time * 2.0) * vec3(1.0,0.2,0.3);
+	vec2 px = 1.0/res;
+	float edge = abs(depth - lin(texture2D(tDepth,vUv+vec2(px.x,0)).r)/far)
+	           + abs(depth - lin(texture2D(tDepth,vUv+vec2(0,px.y)).r)/far);
+	col += edge*vec3(1.0,0.3,0.4);
 
 	gl_FragColor = vec4(col,1.0);
 }`
@@ -277,12 +304,11 @@ function animate(){
 
 	let mult = cam.baseSpeed;
 	if(keys.shift) mult*=cam.boost;
-	if(keys.z)  mult*=cam.slow;
 
 	if(keys.w) cam.velocity.addScaledVector(forward, cam.accel*mult);
 	if(keys.s) cam.velocity.addScaledVector(forward,-cam.accel*mult);
-	if(keys.a) cam.velocity.addScaledVector(right,  -cam.accel*mult);
-	if(keys.d) cam.velocity.addScaledVector(right,   cam.accel*mult);
+	if(keys.a) cam.velocity.addScaledVector(right,-cam.accel*mult);
+	if(keys.d) cam.velocity.addScaledVector(right,cam.accel*mult);
 
 	cam.velocity.multiplyScalar(cam.damping);
 	camera.position.add(cam.velocity);
@@ -294,8 +320,11 @@ function animate(){
 		cam.velocity.set(0,0,0);
 	}
 
-	// Animate shader
-	postMat.uniforms.time.value = performance.now() * 0.001;
+	// animate floor shader
+	floorMat.uniforms.time.value = performance.now()*0.001;
+
+	// animate postFX
+	postMat.uniforms.time.value = performance.now()*0.001;
 
 	renderer.setRenderTarget(rt);
 	renderer.render(scene,camera);
