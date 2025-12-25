@@ -14,6 +14,7 @@
 		padding:6px;
 		font-size:12px;
 	}
+	input { background:#111; color:white; border:1px solid #333; }
 </style>
 </head>
 <body>
@@ -32,10 +33,13 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 15000);
 camera.position.set(2000,2000,2000);
 
 const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
 
 /* ======================
    GROUPS
@@ -47,24 +51,24 @@ scene.add(playerGroup, spectatorGroup);
 /* ======================
    UI
 ====================== */
-const tributeUI = document.createElement("div");
-tributeUI.className="ui";
-tributeUI.style.top="10px";
-tributeUI.style.left="10px";
-document.body.appendChild(tributeUI);
+const tributeUI = ui("10px","10px");
+const killUI = ui("10px",null,"10px");
+const chatUI = ui(null,"10px","10px");
 
-const killUI = document.createElement("div");
-killUI.className="ui";
-killUI.style.top="10px";
-killUI.style.right="10px";
-document.body.appendChild(killUI);
+chatUI.innerHTML = `
+	<div id="log" style="height:120px;overflow:auto"></div>
+	<input id="input" placeholder="chat" style="width:100%">
+`;
 
-const chatUI = document.createElement("div");
-chatUI.className="ui";
-chatUI.style.bottom="10px";
-chatUI.style.left="10px";
-chatUI.innerHTML=`<div id="log" style="height:120px;overflow:auto"></div><input id="input" placeholder="chat" style="width:100%">`;
-document.body.appendChild(chatUI);
+function ui(top,left,right){
+	const d=document.createElement("div");
+	d.className="ui";
+	if(top) d.style.top=top;
+	if(left) d.style.left=left;
+	if(right) d.style.right=right;
+	document.body.appendChild(d);
+	return d;
+}
 
 /* ======================
    STATE
@@ -81,28 +85,35 @@ function makePlayer() {
 		new THREE.SphereGeometry(8),
 		new THREE.MeshBasicMaterial({ color:0x00ff00 })
 	);
+
 	const hit = new THREE.Mesh(
 		new THREE.SphereGeometry(40),
 		new THREE.MeshBasicMaterial({ transparent:true, opacity:0 })
 	);
+	hit.userData.isHitbox = true;
 	dot.add(hit);
-	dot.userData.hit = hit;
-	dot.userData.arrow = new THREE.ArrowHelper(
+
+	const arrow = new THREE.ArrowHelper(
 		new THREE.Vector3(0,0,1),
 		new THREE.Vector3(),
 		80,
 		0xffff00
 	);
-	dot.add(dot.userData.arrow);
+	dot.add(arrow);
+
+	dot.userData.arrow = arrow;
 	return dot;
 }
 
 /* ======================
-   FETCH PLAYERS
+   PLAYER FETCH (5Hz)
 ====================== */
 async function updatePlayers() {
 	const data = await fetch("/map").then(r=>r.json());
-	tributeUI.innerHTML="<b>Tributes</b><br>"+data.map(p=>p.name).join("<br>");
+
+	tributeUI.innerHTML =
+		"<b>Tributes</b><br>" +
+		data.map(p=>p.name).join("<br>");
 
 	for (const p of data) {
 		if (!players.has(p.id)) {
@@ -114,18 +125,23 @@ async function updatePlayers() {
 		m.position.lerp(new THREE.Vector3(p.x,50,p.z),0.35);
 	}
 }
+setInterval(updatePlayers, 200);
 
 /* ======================
-   CLICK TRACK
+   CLICK TRACK (MOBILE SAFE)
 ====================== */
 const ray = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
+
 window.addEventListener("pointerdown", e=>{
 	mouse.x=(e.clientX/innerWidth)*2-1;
 	mouse.y=-(e.clientY/innerHeight)*2+1;
 	ray.setFromCamera(mouse,camera);
-	const hit = ray.intersectObjects(playerGroup.children,true)[0];
-	if (hit) tracked = hit.object.parent;
+
+	const hits = ray.intersectObjects(playerGroup.children,true)
+		.filter(h=>h.object.userData.isHitbox);
+
+	if (hits[0]) tracked = hits[0].object.parent;
 });
 
 /* ======================
@@ -139,9 +155,12 @@ window.addEventListener("keydown", e=>{
 
 function follow() {
 	if (!tracked || followMode==="free") return;
-	const off = followMode==="behind"
-		? new THREE.Vector3(0,300,700)
-		: new THREE.Vector3(0,1200,0);
+
+	const off =
+		followMode==="behind"
+			? new THREE.Vector3(0,300,700)
+			: new THREE.Vector3(0,1200,0);
+
 	camera.position.lerp(tracked.position.clone().add(off),0.08);
 	camera.lookAt(tracked.position);
 }
@@ -157,8 +176,8 @@ socket.on("spectators:init", list=>{
 			new THREE.SphereGeometry(12),
 			new THREE.MeshBasicMaterial({ color:s.color })
 		);
-		spectatorGroup.add(m);
 		m.userData.id=s.id;
+		spectatorGroup.add(m);
 	});
 });
 
@@ -181,7 +200,9 @@ document.getElementById("input").addEventListener("keydown",e=>{
 });
 
 socket.on("kill:feed", list=>{
-	killUI.innerHTML="<b>Kills</b><br>"+list.map(k=>`${k.killer} ☠ ${k.victim}`).join("<br>");
+	killUI.innerHTML =
+		"<b>Kills</b><br>" +
+		list.map(k=>`${k.killer} ☠ ${k.victim}`).join("<br>");
 });
 
 /* ======================
@@ -194,11 +215,19 @@ setInterval(()=>{
 },120);
 
 /* ======================
+   RESIZE
+====================== */
+addEventListener("resize",()=>{
+	camera.aspect=innerWidth/innerHeight;
+	camera.updateProjectionMatrix();
+	renderer.setSize(innerWidth,innerHeight);
+});
+
+/* ======================
    LOOP
 ====================== */
-async function animate(){
+function animate(){
 	requestAnimationFrame(animate);
-	await updatePlayers();
 	follow();
 	controls.update();
 	renderer.render(scene,camera);
