@@ -68,52 +68,54 @@ const ui = document.getElementById("ui");
 const killFeedEl = document.getElementById("killFeed");
 
 /* ================= PLAYER BUSTS ================= */
-function getRobloxBustUrl(userId,size=150){
-	return `https://www.roblox.com/headshot-thumbnail/image?userId=${userId}&width=${size}&height=${size}&format=png`;
-}
-
-function makePlayer(userId){
-	const g = new THREE.Group();
-	const texture = new THREE.TextureLoader().load(getRobloxBustUrl(userId));
-	const mat = new THREE.MeshBasicMaterial({ map:texture, transparent:true, depthWrite:false });
-	const plane = new THREE.Mesh(new THREE.PlaneGeometry(30,30), mat);
-	plane.rotation.x = -Math.PI/2;
-	g.add(plane);
-	return g;
+function makePlayer(bustUrl) {
+    const g = new THREE.Group();
+    const texture = new THREE.TextureLoader().load(bustUrl);
+    const mat = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false
+    });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), mat);
+    plane.rotation.x = -Math.PI / 2; // lay flat on floor
+    g.add(plane);
+    g.userData.plane = plane; // store reference for camera-facing
+    return g;
 }
 
 /* ================= UPDATE PLAYERS ================= */
-const players = new Map();
-let follow = null;
-async function updatePlayers(){
-	const data = await fetch("/map").then(r=>r.json());
-	ui.innerHTML="<b>Tributes</b>";
-	const alive = new Set();
-	for(const p of data){
-		alive.add(p.id);
-		if(!players.has(p.id)){
-			const m = makePlayer(p.userId);
-			scene.add(m);
-			players.set(p.id,m);
-		}
-		const m = players.get(p.id);
-		m.position.set(p.x,p.y+20,p.z);
-		m.rotation.y=p.yaw;
+async function updatePlayers() {
+    const data = await fetch("/map").then(r => r.json());
+    ui.innerHTML = "<b>Tributes</b>";
+    const alive = new Set();
 
-		const d=document.createElement("div");
-		d.className="name";
-		d.textContent=p.name;
-		d.onclick=()=>follow=m;
-		ui.appendChild(d);
-	}
-	for(const [id,m] of players){
-		if(!alive.has(id)){
-			scene.remove(m);
-			players.delete(id);
-		}
-	}
+    for (const p of data) {
+        alive.add(p.id);
+        if (!players.has(p.id)) {
+            const m = makePlayer(p.bustUrl); // use bustUrl from server
+            scene.add(m);
+            players.set(p.id, m);
+        }
+
+        const m = players.get(p.id);
+        m.position.set(p.x, p.y + 20, p.z);
+        m.rotation.y = p.yaw; // optional if you want orientation
+
+        const d = document.createElement("div");
+        d.className = "name";
+        d.textContent = p.name;
+        d.onclick = () => follow = m;
+        ui.appendChild(d);
+    }
+
+    for (const [id, m] of players) {
+        if (!alive.has(id)) {
+            scene.remove(m);
+            players.delete(id);
+        }
+    }
 }
-setInterval(updatePlayers,200);
+setInterval(updatePlayers,24);
 
 /* ================= CAMERA CONTROLS ================= */
 const cam={yaw:0,pitch:0,velocity:new THREE.Vector3(),accel:2.4,damping:.88,baseSpeed:18,boost:3};
@@ -185,6 +187,10 @@ postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),postMat));
 function animate(){
 	requestAnimationFrame(animate);
 
+	players.forEach(p => {
+  		p.userData.plane.lookAt(camera.position);
+	});
+	
 	camera.rotation.order="YXZ";
 	camera.rotation.y=cam.yaw;
 	camera.rotation.x=cam.pitch;
