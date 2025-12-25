@@ -102,12 +102,6 @@ new OBJLoader().load("/arena.obj", obj=>{
 	arenaGroup.add(obj);
 });
 
-/* ================= FRUSTUM ================= */
-const frustum = new THREE.CameraHelper(camera);
-frustum.material.transparent = true;
-frustum.material.opacity = .3;
-scene.add(frustum);
-
 /* ================= UI ================= */
 const ui = document.getElementById("ui");
 
@@ -277,8 +271,6 @@ function animate(){
 		const off=new THREE.Vector3(0,140,-320).applyEuler(camera.rotation);
 		camera.position.lerp(t.add(off),.08);
 	}
-
-	frustum.update();
 
 	renderer.setRenderTarget(rt);
 	renderer.render(scene,camera);
