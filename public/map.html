@@ -86,7 +86,14 @@ scene.add(sun);
 const frustum=new THREE.CameraHelper(camera);
 frustum.material.transparent=true;
 frustum.material.opacity=.35;
+frustum.visible = false; // 👈 OFF by default
 scene.add(frustum);
+
+addEventListener("keydown", e=>{
+	if(e.code === "KeyF"){
+		frustum.visible = !frustum.visible;
+	}
+});
 
 /* ================= UI ================= */
 const ui=document.getElementById("ui");
