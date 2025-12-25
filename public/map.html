@@ -108,8 +108,6 @@ const ui = document.getElementById("ui");
 
 /* ================= PLAYERS ================= */
 const players = new Map();
-const trails = new THREE.Group();
-scene.add(trails);
 
 function makePlayer(){
 	const g = new THREE.Group();
@@ -151,22 +149,6 @@ function makePlayer(){
 	return g;
 }
 
-function addTrail(pos){
-	const m = new THREE.Mesh(
-		new THREE.PlaneGeometry(36,36),
-		new THREE.MeshBasicMaterial({
-			color:0xff2030,
-			transparent:true,
-			opacity:.12,
-			depthWrite:false
-		})
-	);
-	m.rotation.x = -Math.PI/2;
-	m.position.copy(pos);
-	trails.add(m);
-	setTimeout(()=>trails.remove(m),2800);
-}
-
 /* ================= UPDATE ================= */
 let follow=null;
 
@@ -183,7 +165,6 @@ async function updatePlayers(){
 			players.set(p.id,m);
 		}
 		const m = players.get(p.id);
-		addTrail(m.position.clone());
 		m.position.set(p.x,p.y+20,p.z);
 		m.rotation.y = p.yaw;
 		m.userData.camDir.rotation.z = p.pitch;
