@@ -34,6 +34,7 @@ html, body {
 .name:hover {
     background: rgba(255,120,140,0.28);
 }
+canvas { display:block }
 </style>
 
 <script type="importmap">
@@ -53,15 +54,15 @@ import * as THREE from "three";
 import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 
 /* ================= RENDERER ================= */
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 renderer.autoClear = false;
 document.body.appendChild(renderer.domElement);
 
 /* ================= CAMERA ================= */
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 20000);
-camera.position.set(0, 1200, 1800);
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 20000);
+camera.position.set(0, 800, 1800);
 
 /* ================= SCENES ================= */
 const scene = new THREE.Scene();
@@ -75,111 +76,92 @@ scene.add(sun);
 
 /* ================= ARENA ================= */
 new OBJLoader().load("/arena.obj", obj => {
-    obj.traverse(n => {
-        if (n.isMesh) {
+    obj.traverse(n=>{
+        if(n.isMesh){
             n.material = new THREE.MeshStandardMaterial({
                 color: 0x5a141d,
                 roughness: 0.65,
                 emissive: 0x2a060b,
                 emissiveIntensity: 0.35
             });
-            n.castShadow = false;
-            n.receiveShadow = true;
         }
     });
     scene.add(obj);
 });
 
-/* ================= RENDER TARGET ================= */
-const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, {
-    depthBuffer: true,
-    depthTexture: new THREE.DepthTexture(innerWidth, innerHeight)
-});
-
 /* ================= POST PROCESS ================= */
+const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight);
+rt.depthTexture = new THREE.DepthTexture();
+
 const postScene = new THREE.Scene();
-const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const postCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
 
 const postMat = new THREE.ShaderMaterial({
-    uniforms: {
-        tColor: { value: rt.texture },
-        tDepth: { value: rt.depthTexture },
-        res: { value: new THREE.Vector2(innerWidth, innerHeight) },
-        near: { value: camera.near },
-        far: { value: camera.far }
-    },
-    vertexShader: `
-        varying vec2 vUv;
-        void main(){
-            vUv = uv;
-            gl_Position = vec4(position.xy, 0.0, 1.0);
-        }
-    `,
-    fragmentShader: `
-        precision highp float;
-        varying vec2 vUv;
-        uniform sampler2D tColor;
-        uniform sampler2D tDepth;
-        uniform vec2 res;
-        uniform float near;
-        uniform float far;
+uniforms:{
+    tColor:{value:rt.texture},
+    tDepth:{value:rt.depthTexture},
+    near:{value:camera.near},
+    far:{value:camera.far}
+},
+vertexShader:`
+varying vec2 vUv;
+void main(){
+    vUv = uv;
+    gl_Position = vec4(position.xy,0.,1.);
+}`,
+fragmentShader:`
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tColor;
+uniform sampler2D tDepth;
+uniform float near;
+uniform float far;
 
-        float linearize(float d){
-            float z = d * 2.0 - 1.0;
-            return (2.0 * near * far) / (far + near - z * (far - near));
-        }
+float linearize(float d){
+    float z = d * 2.0 - 1.0;
+    return (2.0 * near * far) / (far + near - z * (far - near));
+}
 
-        void main(){
-            vec3 col = texture2D(tColor, vUv).rgb;
-            vec2 px = 1.0 / res;
-
-            float d = linearize(texture2D(tDepth, vUv).r) / far;
-
-            float dX = linearize(texture2D(tDepth, vUv + vec2(px.x, 0.0)).r) / far;
-            float dY = linearize(texture2D(tDepth, vUv + vec2(0.0, px.y)).r) / far;
-
-            float edge = abs(d - dX) + abs(d - dY);
-
-            col += edge * vec3(1.0, 0.3, 0.4);
-            col = mix(col, vec3(0.18, 0.02, 0.04), smoothstep(0.3, 0.9, d));
-
-            gl_FragColor = vec4(col, 1.0);
-        }
-    `
+void main(){
+    vec3 col = texture2D(tColor, vUv).rgb;
+    float d = linearize(texture2D(tDepth, vUv).r) / far;
+    col = mix(col, vec3(0.18,0.02,0.04), smoothstep(0.3,0.9,d));
+    gl_FragColor = vec4(col,1.0);
+}`
 });
-
-postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat));
+postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), postMat));
 
 /* ================= PLAYERS ================= */
 const players = new Map();
 const ui = document.getElementById("ui");
+const texLoader = new THREE.TextureLoader();
 
 function makePlayer(p){
     const g = new THREE.Group();
 
-    const tex = new THREE.TextureLoader().load(`/bust/${p.id}`);
-    const sprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-            map: tex,
-            depthTest: false,
-            depthWrite: false
-        })
-    );
-    sprite.scale.set(60, 60, 1);
-    g.add(sprite);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: texLoader.load(`/bust/${p.id}`),
+        transparent: true,
+        depthTest: false,
+        depthWrite: false
+    }));
 
+    sprite.scale.set(60,60,1);
+    sprite.renderOrder = 999;
+
+    g.add(sprite);
     overlayScene.add(g);
     return g;
 }
 
 async function updatePlayers(){
-    const data = await fetch("/map").then(r => r.json());
+    const data = await fetch("/map").then(r=>r.json());
     ui.innerHTML = "<b>Tributes</b>";
     const alive = new Set();
 
-    for (const p of data) {
+    for(const p of data){
         alive.add(p.id);
-        if (!players.has(p.id)) {
+        if(!players.has(p.id)){
             players.set(p.id, makePlayer(p));
         }
         const m = players.get(p.id);
@@ -191,8 +173,8 @@ async function updatePlayers(){
         ui.appendChild(d);
     }
 
-    for (const [id, m] of players) {
-        if (!alive.has(id)) {
+    for(const [id,m] of players){
+        if(!alive.has(id)){
             overlayScene.remove(m);
             players.delete(id);
         }
@@ -200,12 +182,18 @@ async function updatePlayers(){
 }
 setInterval(updatePlayers, 200);
 
-/* ================= CAMERA CONTROL ================= */
-const cam = { yaw: 0, pitch: 0 };
-addEventListener("mousemove", e => {
-    if (document.pointerLockElement) {
-        cam.yaw -= e.movementX * 0.002;
-        cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch - e.movementY * 0.002));
+/* ================= CONTROLS ================= */
+const cam = { yaw:0, pitch:0 };
+const keys = Object.create(null);
+
+addEventListener("keydown", e => keys[e.code] = true);
+addEventListener("keyup",   e => keys[e.code] = false);
+
+addEventListener("mousemove", e=>{
+    if(document.pointerLockElement){
+        cam.yaw   -= e.movementX * 0.002;
+        cam.pitch -= e.movementY * 0.002;
+        cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
     }
 });
 renderer.domElement.onclick = () => renderer.domElement.requestPointerLock();
@@ -214,32 +202,48 @@ renderer.domElement.onclick = () => renderer.domElement.requestPointerLock();
 function animate(){
     requestAnimationFrame(animate);
 
+    const speed = 30;
+
+    const forward = new THREE.Vector3(
+        Math.sin(cam.yaw),
+        0,
+        Math.cos(cam.yaw)
+    ).normalize();
+
+    const right = new THREE.Vector3(
+        Math.cos(cam.yaw),
+        0,
+        -Math.sin(cam.yaw)
+    ).normalize();
+
+    if(keys["KeyW"]) camera.position.addScaledVector(forward, -speed);
+    if(keys["KeyS"]) camera.position.addScaledVector(forward,  speed);
+    if(keys["KeyA"]) camera.position.addScaledVector(right,   -speed);
+    if(keys["KeyD"]) camera.position.addScaledVector(right,    speed);
+
     camera.rotation.order = "YXZ";
     camera.rotation.y = cam.yaw;
     camera.rotation.x = cam.pitch;
 
-    for (const [, p] of players) {
+    for(const [,p] of players){
         p.quaternion.copy(camera.quaternion);
     }
 
-    renderer.setRenderTarget(rt);
     renderer.clear();
+    renderer.setRenderTarget(rt);
     renderer.render(scene, camera);
 
     renderer.setRenderTarget(null);
-    renderer.clear();
+    renderer.clearDepth();
     renderer.render(postScene, postCam);
     renderer.render(overlayScene, camera);
 }
 animate();
 
-/* ================= RESIZE ================= */
-addEventListener("resize", () => {
+addEventListener("resize", ()=>{
     renderer.setSize(innerWidth, innerHeight);
-    camera.aspect = innerWidth / innerHeight;
+    camera.aspect = innerWidth/innerHeight;
     camera.updateProjectionMatrix();
-    rt.setSize(innerWidth, innerHeight);
-    postMat.uniforms.res.value.set(innerWidth, innerHeight);
 });
 </script>
 </body>
