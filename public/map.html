@@ -1,40 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>HG Arena – Roblox Lighting Sync</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<style>
-	html, body {
-		margin: 0;
-		width: 100%;
-		height: 100%;
-		overflow: hidden;
-		background: #02030a;
-	}
-	canvas { display: block; }
-</style>
-
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-  }
-}
-</script>
-</head>
-
-<body>
-
 <script type="module">
-import * as THREE from "three";
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-import { EffectComposer } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js";
-import { ShaderPass } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js";
-import { UnrealBloomPass } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
+import { Sky } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Sky.js";
 
 /* ======================
    RENDERER
@@ -44,190 +11,97 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
 document.body.appendChild(renderer.domElement);
-
-const depthTexture = new THREE.DepthTexture();
 
 /* ======================
    SCENE / CAMERA
 ====================== */
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x050914, 0.00035);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 10000);
+camera.position.set(2000, 1600, 2000);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 9000);
-camera.position.set(1800, 1400, 1800);
-
-/* ======================
-   ROBLOX SKY
-====================== */
-
-const skyMat = new THREE.ShaderMaterial({
-	side: THREE.BackSide,
-	uniforms: {
-		sunY: { value: 1 },
-		topDay: { value: new THREE.Color(0x87ceeb) },
-		horizonDay: { value: new THREE.Color(0xffcc88) },
-		topNight: { value: new THREE.Color(0x02030a) },
-		horizonNight: { value: new THREE.Color(0x050914) }
-	},
-	vertexShader: `
-		varying vec3 vPos;
-		void main() {
-			vPos = position;
-			gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-		}
-	`,
-	fragmentShader: `
-		uniform float sunY;
-		uniform vec3 topDay;
-		uniform vec3 horizonDay;
-		uniform vec3 topNight;
-		uniform vec3 horizonNight;
-		varying vec3 vPos;
-
-		void main() {
-			float h = normalize(vPos).y * 0.5 + 0.5;
-			float day = clamp(sunY * 0.5 + 0.5, 0.0, 1.0);
-			vec3 top = mix(topNight, topDay, day);
-			vec3 horizon = mix(horizonNight, horizonDay, day);
-			gl_FragColor = vec4(mix(horizon, top, h), 1.0);
-		}
-	`
-});
-
-scene.add(new THREE.Mesh(
-	new THREE.SphereGeometry(8000, 32, 32),
-	skyMat
-));
+new OrbitControls(camera, renderer.domElement);
 
 /* ======================
-   CONTROLS
+   PHYSICAL SKY
 ====================== */
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
+const sky = new Sky();
+sky.scale.setScalar(10000);
+scene.add(sky);
+
+const sun = new THREE.Vector3();
+const skyU = sky.material.uniforms;
+skyU.turbidity.value = 10;
+skyU.rayleigh.value = 2;
+skyU.mieCoefficient.value = 0.005;
+skyU.mieDirectionalG.value = 0.8;
 
 /* ======================
-   LIGHTING
+   LIGHTS
 ====================== */
 
-scene.add(new THREE.AmbientLight(0x223366, 0.45));
-
-const sun = new THREE.DirectionalLight(0x99ccff, 1.8);
-scene.add(sun);
+const dirLight = new THREE.DirectionalLight(0xffffff, 3);
+scene.add(dirLight);
+scene.add(new THREE.AmbientLight(0x404060, 0.4));
 
 /* ======================
-   ARENA
+   PLAYERS
 ====================== */
 
-new OBJLoader().load("./arena.obj", obj => {
-	obj.traverse(m => {
-		if (!m.isMesh) return;
-		m.material = new THREE.MeshStandardMaterial({
-			color: 0x0a1022,
-			roughness: 0.85,
-			metalness: 0.15,
-			emissive: 0x03060f
-		});
-	});
-	scene.add(obj);
-});
+const playerGroup = new THREE.Group();
+scene.add(playerGroup);
 
-/* ======================
-   ROBLOX LIGHTING STATE
-====================== */
+function makePlayerDot() {
+	const canvas = document.createElement("canvas");
+	canvas.width = 128;
+	canvas.height = 32;
+	const ctx = canvas.getContext("2d");
 
-let lighting = {
-	clockTime: 12,
-	fogColor: [5, 9, 20],
-	fogDensity: 0.00035
-};
-
-async function updateLighting() {
-	try {
-		lighting = await fetch("/lighting").then(r => r.json());
-	} catch {}
+	const tex = new THREE.CanvasTexture(canvas);
+	const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+	const sprite = new THREE.Sprite(mat);
+	sprite.scale.set(120, 30, 1);
+	sprite.userData.ctx = ctx;
+	sprite.userData.tex = tex;
+	return sprite;
 }
-setInterval(updateLighting, 1000);
 
-/* ======================
-   SUN FROM CLOCKTIME
-====================== */
+const playerSprites = new Map();
 
-function sunFromClockTime(clockTime) {
-	const angle = (clockTime / 24) * Math.PI * 2 - Math.PI / 2;
-	return new THREE.Vector3(
-		Math.cos(angle),
-		Math.sin(angle),
-		0.35
-	).normalize();
+function updatePlayers(data) {
+	for (const p of data) {
+		if (!playerSprites.has(p.id)) {
+			const s = makePlayerDot();
+			playerGroup.add(s);
+			playerSprites.set(p.id, s);
+		}
+		const s = playerSprites.get(p.id);
+		s.position.set(p.x, 50, p.z);
+
+		const ctx = s.userData.ctx;
+		ctx.clearRect(0, 0, 128, 32);
+		ctx.fillStyle = "#000";
+		ctx.fillRect(0, 0, 128, 32);
+		ctx.fillStyle = "#0f0";
+		ctx.fillRect(2, 2, (p.health / p.maxHealth) * 124, 28);
+		s.userData.tex.needsUpdate = true;
+	}
 }
 
 /* ======================
-   TRUE VOLUMETRIC GOD RAYS
+   FETCH LOOP
 ====================== */
 
-const GodRayPass = new ShaderPass({
-	uniforms: {
-		tDiffuse: { value: null },
-		tDepth: { value: depthTexture },
-		cameraNear: { value: camera.near },
-		cameraFar: { value: camera.far },
-		lightDir: { value: new THREE.Vector3() }
-	},
-	vertexShader: `
-		varying vec2 vUv;
-		void main() {
-			vUv = uv;
-			gl_Position = vec4(position.xy,0.0,1.0);
-		}
-	`,
-	fragmentShader: `
-		#include <packing>
-		uniform sampler2D tDiffuse;
-		uniform sampler2D tDepth;
-		uniform float cameraNear;
-		uniform float cameraFar;
-		uniform vec3 lightDir;
-		varying vec2 vUv;
+let lighting = null;
 
-		float readDepth(vec2 uv) {
-			float z = texture2D(tDepth, uv).x;
-			return perspectiveDepthToViewZ(z, cameraNear, cameraFar);
-		}
-
-		void main() {
-			vec3 base = texture2D(tDiffuse, vUv).rgb;
-			float depth = -readDepth(vUv);
-			vec3 col = vec3(0.0);
-
-			float stepSize = depth / 32.0;
-			for (int i = 0; i < 32; i++) {
-				float t = float(i) * stepSize;
-				float fog = exp(-t * 0.002);
-				col += vec3(0.4,0.6,1.0) * fog * 0.02;
-			}
-
-			gl_FragColor = vec4(base + col, 1.0);
-		}
-	`
-});
-
-/* ======================
-   POSTPROCESS
-====================== */
-
-const composer = new EffectComposer(renderer);
-composer.renderTarget1.depthTexture = depthTexture;
-composer.renderTarget2.depthTexture = depthTexture;
-
-composer.addPass(new RenderPass(scene, camera));
-composer.addPass(new UnrealBloomPass(
-	new THREE.Vector2(innerWidth, innerHeight),
-	1.1, 0.55, 0.15
-));
-composer.addPass(GodRayPass);
+setInterval(async () => {
+	updatePlayers(await fetch("/map").then(r => r.json()));
+	lighting = await fetch("/lighting").then(r => r.json());
+}, 200);
 
 /* ======================
    ANIMATE
@@ -235,37 +109,21 @@ composer.addPass(GodRayPass);
 
 function animate() {
 	requestAnimationFrame(animate);
-	controls.update();
 
-	const sunDir = sunFromClockTime(lighting.clockTime);
+	if (lighting) {
+		sun.set(
+			lighting.sunDirection[0],
+			lighting.sunDirection[1],
+			lighting.sunDirection[2]
+		);
 
-	sun.position.copy(sunDir).multiplyScalar(3000);
-	skyMat.uniforms.sunY.value = sunDir.y;
+		sky.material.uniforms.sunPosition.value.copy(sun.multiplyScalar(5000));
+		dirLight.position.copy(sun);
+		dirLight.intensity = lighting.brightness * 1.2;
+	}
 
-	scene.fog.color.setRGB(
-		lighting.fogColor[0] / 255,
-		lighting.fogColor[1] / 255,
-		lighting.fogColor[2] / 255
-	);
-	scene.fog.density = lighting.fogDensity;
-
-	GodRayPass.uniforms.lightDir.value.copy(sunDir);
-
-	composer.render();
+	renderer.render(scene, camera);
 }
+
 animate();
-
-/* ======================
-   RESIZE
-====================== */
-
-addEventListener("resize", () => {
-	camera.aspect = innerWidth / innerHeight;
-	camera.updateProjectionMatrix();
-	renderer.setSize(innerWidth, innerHeight);
-	composer.setSize(innerWidth, innerHeight);
-});
 </script>
-
-</body>
-</html>
