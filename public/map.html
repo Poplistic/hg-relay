@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Spectator Map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <style>
 	body { margin:0; overflow:hidden; background:black; }
 	.ui {
@@ -16,13 +17,26 @@
 	}
 	input { background:#111; color:white; border:1px solid #333; }
 </style>
+
+<!-- ✅ IMPORT MAP (FIXES "three" MODULE ERROR) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
 </head>
+
 <body>
 
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 <script type="module">
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+/* ======================
+   MODULE IMPORTS
+====================== */
+import * as THREE from "three";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
 
 /* ======================
@@ -33,6 +47,8 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 15000);
 camera.position.set(2000,2000,2000);
 
@@ -51,7 +67,7 @@ scene.add(playerGroup, spectatorGroup);
 ====================== */
 const tributeUI = ui("10px","10px");
 const killUI = ui("10px",null,"10px");
-const chatUI = ui(null, "10px", null, "10px");
+const chatUI = ui(null,"10px",null,"10px");
 
 chatUI.innerHTML = `
 	<div id="log" style="height:120px;overflow:auto"></div>
@@ -72,12 +88,10 @@ function ui(top, left, right, bottom){
 /* ======================
    STATE
 ====================== */
-
 let tracked = null;
-	
 let lastTrackedPos = null;
 let trackedVelocity = 0;
-	
+
 const players = new Map();
 let followMode = "behind";
 
@@ -104,36 +118,40 @@ function makePlayer() {
 		0xffff00
 	);
 	dot.add(arrow);
-
 	dot.userData.arrow = arrow;
+
 	return dot;
 }
 
 /* ======================
    FETCH PLAYERS (5Hz)
 ====================== */
-
 const terrainRay = new THREE.Raycaster();
 const rayOrigin = new THREE.Vector3();
 const rayDown = new THREE.Vector3(0, -1, 0);
 const targetPos = new THREE.Vector3();
 const lookDir = new THREE.Vector3();
 
+/* ⚠️ You must define terrainMesh somewhere */
+let terrainMesh = new THREE.Mesh(
+	new THREE.PlaneGeometry(20000,20000),
+	new THREE.MeshBasicMaterial({ visible:false })
+);
+terrainMesh.rotation.x = -Math.PI/2;
+scene.add(terrainMesh);
+
 async function updatePlayers() {
 	const data = await fetch("/map").then(r => r.json());
 
-	/* === UI === */
 	tributeUI.innerHTML =
 		"<b>Tributes</b><br>" +
 		data.map(p => p.name).join("<br>");
 
-	/* === Track active players === */
 	const activeIds = new Set();
 
 	for (const p of data) {
 		activeIds.add(p.id);
 
-		/* === Create player if missing === */
 		if (!players.has(p.id)) {
 			const m = makePlayer();
 			playerGroup.add(m);
@@ -142,22 +160,17 @@ async function updatePlayers() {
 
 		const m = players.get(p.id);
 
-		/* === TERRAIN HEIGHT CORRECTION === */
 		rayOrigin.set(p.x, 5000, p.z);
 		terrainRay.set(rayOrigin, rayDown);
 
 		const hits = terrainRay.intersectObject(terrainMesh, true);
-		const y = hits.length
-			? hits[0].point.y + 6
-			: (p.y ?? 6);
+		const y = hits.length ? hits[0].point.y + 6 : (p.y ?? 6);
 
 		targetPos.set(p.x, y, p.z);
 		m.position.lerp(targetPos, 0.35);
 
-		/* === LOOK DIRECTION ARROW === */
-		if (p.lookX !== undefined && m.userData.arrow) {
+		if (p.lookX !== undefined) {
 			lookDir.set(p.lookX, 0, p.lookZ);
-
 			if (lookDir.lengthSq() > 0.0001) {
 				lookDir.normalize();
 				m.userData.arrow.setDirection(lookDir);
@@ -165,13 +178,12 @@ async function updatePlayers() {
 		}
 	}
 
-	/* === REMOVE DISCONNECTED PLAYERS === */
 	for (const [id, mesh] of players) {
 		if (!activeIds.has(id)) {
 			playerGroup.remove(mesh);
-			mesh.traverse(o => {
-				if (o.geometry) o.geometry.dispose();
-				if (o.material) o.material.dispose();
+			mesh.traverse(o=>{
+				o.geometry?.dispose();
+				o.material?.dispose();
 			});
 			players.delete(id);
 		}
@@ -181,26 +193,26 @@ async function updatePlayers() {
 setInterval(updatePlayers, 200);
 
 /* ======================
-   CLICK TRACK (MOBILE SAFE)
+   CLICK TRACK
 ====================== */
 const ray = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-window.addEventListener("pointerdown", e=>{
-	mouse.x=(e.clientX/innerWidth)*2-1;
-	mouse.y=-(e.clientY/innerHeight)*2+1;
-	ray.setFromCamera(mouse,camera);
+addEventListener("pointerdown", e=>{
+	mouse.x = (e.clientX/innerWidth)*2 - 1;
+	mouse.y = -(e.clientY/innerHeight)*2 + 1;
+	ray.setFromCamera(mouse, camera);
 
-	const hits = ray.intersectObjects(playerGroup.children,true)
-		.filter(h=>h.object.userData.isHitbox);
+	const hits = ray.intersectObjects(playerGroup.children, true)
+		.filter(h => h.object.userData.isHitbox);
 
 	if (hits[0]) tracked = hits[0].object.parent;
 });
 
 /* ======================
-   FOLLOW CAM
+   FOLLOW CAMERA
 ====================== */
-window.addEventListener("keydown", e=>{
+addEventListener("keydown", e=>{
 	if (e.key==="1") followMode="behind";
 	if (e.key==="2") followMode="overhead";
 	if (e.key==="3") followMode="free";
@@ -209,28 +221,16 @@ window.addEventListener("keydown", e=>{
 function follow() {
 	if (!tracked || followMode==="free") return;
 
-	/* === SPEED ESTIMATION === */
-	if (lastTrackedPos) {
+	if (lastTrackedPos)
 		trackedVelocity = tracked.position.distanceTo(lastTrackedPos);
-	}
+
 	lastTrackedPos = tracked.position.clone();
 
 	const speedZoom = THREE.MathUtils.clamp(trackedVelocity * 6, 0, 1200);
 
-	let offset;
-	if (followMode === "behind") {
-		offset = new THREE.Vector3(
-			0,
-			300 + speedZoom * 0.3,
-			700 + speedZoom
-		);
-	} else {
-		offset = new THREE.Vector3(
-			0,
-			1200 + speedZoom,
-			0
-		);
-	}
+	const offset = followMode==="behind"
+		? new THREE.Vector3(0,300 + speedZoom*0.3,700 + speedZoom)
+		: new THREE.Vector3(0,1200 + speedZoom,0);
 
 	camera.position.lerp(tracked.position.clone().add(offset), 0.08);
 	camera.lookAt(tracked.position);
@@ -243,29 +243,29 @@ const socket = io();
 
 socket.on("spectators:init", list=>{
 	list.forEach(s=>{
-		const m=new THREE.Mesh(
+		const m = new THREE.Mesh(
 			new THREE.SphereGeometry(12),
 			new THREE.MeshBasicMaterial({ color:s.color })
 		);
-		m.userData.id=s.id;
+		m.userData.id = s.id;
 		spectatorGroup.add(m);
 	});
 });
 
 socket.on("spectator:update", s=>{
-	const m=[...spectatorGroup.children].find(x=>x.userData.id===s.id);
+	const m = spectatorGroup.children.find(x=>x.userData.id===s.id);
 	if (m) m.position.set(s.pos.x,s.pos.y,s.pos.z);
 });
 
 socket.on("chat:msg", m=>{
-	const log=document.getElementById("log");
-	log.innerHTML+=`<div><b>${m.from}:</b> ${m.msg}</div>`;
-	log.scrollTop=log.scrollHeight;
+	const log = document.getElementById("log");
+	log.innerHTML += `<div><b>${m.from}:</b> ${m.msg}</div>`;
+	log.scrollTop = log.scrollHeight;
 });
 
-document.getElementById("input").addEventListener("keydown",e=>{
-	if(e.key==="Enter"&&e.target.value){
-		socket.emit("chat:send",e.target.value);
+document.getElementById("input").addEventListener("keydown", e=>{
+	if (e.key==="Enter" && e.target.value) {
+		socket.emit("chat:send", e.target.value);
 		e.target.value="";
 	}
 });
@@ -280,30 +280,31 @@ socket.on("kill:feed", list=>{
    SEND CAMERA
 ====================== */
 setInterval(()=>{
-	const dir=new THREE.Vector3();
+	const dir = new THREE.Vector3();
 	camera.getWorldDirection(dir);
-	socket.emit("spectator:update",{ pos:camera.position, dir });
-},120);
+	socket.emit("spectator:update", { pos:camera.position, dir });
+}, 120);
 
 /* ======================
    RESIZE
 ====================== */
-addEventListener("resize",()=>{
-	camera.aspect=innerWidth/innerHeight;
+addEventListener("resize", ()=>{
+	camera.aspect = innerWidth/innerHeight;
 	camera.updateProjectionMatrix();
-	renderer.setSize(innerWidth,innerHeight);
+	renderer.setSize(innerWidth, innerHeight);
 });
 
 /* ======================
-   LOOP (RENDER ONLY)
+   LOOP
 ====================== */
 function animate(){
 	requestAnimationFrame(animate);
 	follow();
 	controls.update();
-	renderer.render(scene,camera);
+	renderer.render(scene, camera);
 }
 animate();
 </script>
+
 </body>
 </html>
