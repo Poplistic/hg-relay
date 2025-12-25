@@ -31,6 +31,11 @@
 		border-radius:4px;
 		padding:4px;
 	}
+
+	#log div { transition:opacity 1.2s ease }
+	#log.fade div { opacity:0 }
+
+	.kill { color:#ff6666 }
 </style>
 
 <script type="importmap">
@@ -91,6 +96,65 @@ new OBJLoader().load("arena.obj", obj=>{
 });
 
 /* ======================
+   UI
+====================== */
+function ui(t,l,r,b){
+	const d=document.createElement("div");
+	d.className="ui";
+	if(t)d.style.top=t;
+	if(l)d.style.left=l;
+	if(r)d.style.right=r;
+	if(b)d.style.bottom=b;
+	document.body.appendChild(d);
+	return d;
+}
+
+const tributeUI = ui("10px","10px");
+const killUI = ui("10px",null,"10px");
+const chatUI = ui(null,"10px",null,"10px");
+
+chatUI.innerHTML = `
+	<div id="log" style="height:120px;overflow:auto;margin-bottom:6px"></div>
+	<input id="input" placeholder="chat">
+`;
+
+/* ======================
+   SOCKET / CHAT / KILLS
+====================== */
+const socket = io();
+let lastChatTime = 0;
+let chatFadeTimer = null;
+
+function resetChatFade(){
+	const log = document.getElementById("log");
+	log.classList.remove("fade");
+	clearTimeout(chatFadeTimer);
+	chatFadeTimer = setTimeout(()=>log.classList.add("fade"),8000);
+}
+
+document.getElementById("input").addEventListener("keydown",e=>{
+	if(e.key!=="Enter"||!e.target.value) return;
+	const now = performance.now();
+	if(now-lastChatTime < 1200) return;
+	lastChatTime = now;
+	socket.emit("chat:send", e.target.value);
+	e.target.value="";
+	resetChatFade();
+});
+
+socket.on("chat:msg",m=>{
+	const log = document.getElementById("log");
+	log.innerHTML += `<div><b>${m.from}:</b> ${m.msg}</div>`;
+	log.scrollTop = log.scrollHeight;
+	resetChatFade();
+});
+
+socket.on("kill:feed",list=>{
+	killUI.innerHTML = "<b>Kills</b><br>" +
+		list.map(k=>`<div class="kill">${k.killer} ☠ ${k.victim}</div>`).join("");
+});
+
+/* ======================
    PLAYER CREATION
 ====================== */
 const players = new Map();
@@ -101,6 +165,7 @@ function makePlayer(name){
 		new THREE.MeshStandardMaterial({ color:0x00ff00 })
 	);
 
+	/* Arrow */
 	const arrow = new THREE.Group();
 	const armGeo = new THREE.BoxGeometry(3,18,3);
 	const mat = new THREE.MeshStandardMaterial({ color:0xffff00 });
@@ -123,10 +188,9 @@ function makePlayer(name){
 		target: new THREE.Vector3(),
 		lastUpdate: performance.now(),
 
-		// LOOK STATE
+		// LOOK PREDICTION
 		lastYaw: 0,
 		yawVelocity: 0,
-		lastLookTime: performance.now(),
 
 		arrow,
 		arrowAngle: 0
@@ -136,12 +200,16 @@ function makePlayer(name){
 }
 
 /* ======================
-   SERVER SNAPSHOT
+   UPDATE PLAYERS
 ====================== */
 async function updatePlayers(){
 	const now = performance.now();
 	const data = await fetch("/map").then(r=>r.json());
 	const active = new Set();
+
+	tributeUI.innerHTML =
+		"<b>Tributes</b><br>" +
+		data.map(p=>p.name).join("<br>");
 
 	for(const p of data){
 		active.add(p.id);
@@ -162,13 +230,18 @@ async function updatePlayers(){
 		u.pos.copy(newPos);
 		u.lastUpdate = now;
 
+		/* HEALTH COLOR */
+		const hp = p.health ?? 100;
+		if(hp > 66) m.material.color.set(0x00ff00);
+		else if(hp > 33) m.material.color.set(0xffaa00);
+		else m.material.color.set(0xff0000);
+
 		/* LOOK SNAPSHOT */
 		if(p.lookX !== undefined){
 			const yaw = -Math.atan2(p.lookX, p.lookZ);
 			const dy = THREE.MathUtils.angleDifference(yaw, u.lastYaw);
 			u.yawVelocity = dy / dt;
 			u.lastYaw = yaw;
-			u.lastLookTime = now;
 		}
 	}
 
@@ -180,6 +253,25 @@ async function updatePlayers(){
 	}
 }
 setInterval(updatePlayers,200);
+
+/* ======================
+   CAMERA FOLLOW
+====================== */
+let followed = null;
+addEventListener("pointerdown",e=>{
+	const mouse = new THREE.Vector2(
+		(e.clientX/innerWidth)*2-1,
+		-(e.clientY/innerHeight)*2+1
+	);
+	const ray = new THREE.Raycaster();
+	ray.setFromCamera(mouse,camera);
+	const hit = ray.intersectObjects(playerGroup.children)[0];
+	if(hit) followed = hit.object;
+});
+
+addEventListener("keydown",e=>{
+	if(e.key==="f") followed = null;
+});
 
 /* ======================
    LOOP (PREDICTION)
@@ -194,8 +286,8 @@ function animate(){
 		u.target.copy(u.pos).addScaledVector(u.vel, 0.12);
 		m.position.lerp(u.target, 0.15);
 
-		/* LOOK PREDICTION (ZERO LATENCY) */
-		const predictTime = 0.14; // ~140ms
+		/* Look prediction */
+		const predictTime = 0.14;
 		const predictedYaw =
 			u.lastYaw + u.yawVelocity * predictTime;
 
@@ -206,6 +298,14 @@ function animate(){
 		);
 
 		u.arrow.rotation.y = u.arrowAngle;
+	}
+
+	/* Cinematic follow */
+	if(followed){
+		const speed = followed.userData.vel.length();
+		const offset = new THREE.Vector3(0, 400 + speed*0.4, 700 + speed);
+		camera.position.lerp(followed.position.clone().add(offset), 0.06);
+		camera.lookAt(followed.position);
 	}
 
 	controls.update();
