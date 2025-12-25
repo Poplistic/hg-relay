@@ -9,21 +9,24 @@
 body {
 	margin:0;
 	overflow:hidden;
-	background:#02040a;
+	background:#080202;
 }
 canvas { display:block }
 
+/* ===== HUD ===== */
 .ui {
 	position:absolute;
-	color:#aefcff;
+	color:#ffd6d6;
 	font-family:system-ui,sans-serif;
-	background:linear-gradient(180deg,rgba(0,255,255,.18),rgba(0,60,60,.05));
+	background:linear-gradient(180deg,rgba(255,40,40,.22),rgba(90,0,0,.08));
 	backdrop-filter:blur(12px) saturate(150%);
-	border:1px solid rgba(0,255,255,.4);
+	border:1px solid rgba(255,40,40,.55);
 	border-radius:12px;
 	padding:10px;
 	font-size:12px;
-	box-shadow:0 0 25px rgba(0,255,255,.35), inset 0 0 30px rgba(0,255,255,.1);
+	box-shadow:
+		0 0 25px rgba(255,40,40,.45),
+		inset 0 0 30px rgba(255,40,40,.15);
 }
 
 .ui::before {
@@ -33,30 +36,32 @@ canvas { display:block }
 	border-radius:12px;
 	background:repeating-linear-gradient(
 		180deg,
-		rgba(255,255,255,.04),
-		rgba(255,255,255,.04) 1px,
+		rgba(255,255,255,.05),
+		rgba(255,255,255,.05) 1px,
 		transparent 1px,
 		transparent 3px
 	);
 	pointer-events:none;
 }
 
+/* ===== Names ===== */
 .name {
 	cursor:pointer;
 	padding:4px 6px;
 	border-radius:6px;
 }
 .name:hover {
-	background:rgba(0,255,255,.18);
-	box-shadow:0 0 12px rgba(0,255,255,.6);
+	background:rgba(255,40,40,.25);
+	box-shadow:0 0 14px rgba(255,40,40,.8);
 }
 
+/* ===== Input ===== */
 input {
 	width:100%;
 	margin-top:6px;
-	background:rgba(0,0,0,.6);
-	border:1px solid rgba(0,255,255,.4);
-	color:#aefcff;
+	background:rgba(0,0,0,.65);
+	border:1px solid rgba(255,40,40,.55);
+	color:#ffd6d6;
 	padding:6px;
 	border-radius:6px;
 	outline:none;
@@ -79,13 +84,13 @@ style="
 	position:absolute;
 	top:12px;
 	right:12px;
-	color:#aefcff;
-	background:linear-gradient(180deg,rgba(0,255,255,.25),rgba(0,80,80,.1));
-	border:1px solid rgba(0,255,255,.5);
+	color:#ffd6d6;
+	background:linear-gradient(180deg,rgba(255,40,40,.3),rgba(120,0,0,.12));
+	border:1px solid rgba(255,40,40,.6);
 	padding:10px 16px;
 	border-radius:10px;
 	text-decoration:none;
-	box-shadow:0 0 20px rgba(0,255,255,.4);
+	box-shadow:0 0 24px rgba(255,40,40,.6);
 ">
 Fallen Tributes
 </a>
@@ -119,7 +124,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x02040a);
+scene.background = new THREE.Color(0x080202);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 30000);
 camera.position.set(0,1200,1800);
@@ -127,8 +132,8 @@ camera.position.set(0,1200,1800);
 /* ======================
    LIGHTING
 ====================== */
-scene.add(new THREE.AmbientLight(0xffffff,0.25));
-const sun = new THREE.DirectionalLight(0xffffff,1.1);
+scene.add(new THREE.AmbientLight(0xffffff,0.18));
+const sun = new THREE.DirectionalLight(0xffffff,1.0);
 sun.position.set(3000,6000,2000);
 scene.add(sun);
 
@@ -174,7 +179,7 @@ socket.on("chat:msg",m=>{
 });
 
 /* ======================
-   SHADERTOY HOLOGRAM
+   SHADERTOY RED HOLOGRAM
 ====================== */
 const holoVertex = `
 varying vec3 vPos;
@@ -195,8 +200,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
 	float scan = sin(vPos.y*0.15 + iTime*6.0)*0.04;
 	float noise = hash(vPos.y+iTime)*0.08;
 	float band = step(0.95,fract(vPos.y*0.08+iTime*0.6));
-	float alpha = 0.28 + scan + noise + band*0.12;
-	fragColor = vec4(0.0,1.0,1.0,alpha);
+	float alpha = 0.28 + scan + noise + band*0.14;
+	fragColor = vec4(1.0,0.15,0.15,alpha);
 }
 
 void main(){
@@ -207,7 +212,7 @@ void main(){
 /* ======================
    ARENA
 ====================== */
-let arenaMeshes = [];
+const arenaMeshes = [];
 const loader = new OBJLoader();
 loader.load("/arena.obj", obj => {
 
@@ -254,7 +259,7 @@ function makePlayer(){
 			void main(){
 				float p = sin(length(vPos)*0.6 - iTime*4.0);
 				float g = smoothstep(0.2,1.0,p);
-				gl_FragColor = vec4(0.0,0.6+g*0.4,1.0,1.0);
+				gl_FragColor = vec4(1.0,0.2+g*0.6,0.2,1.0);
 			}`,
 			uniforms:{ iTime:{value:0} }
 		})
