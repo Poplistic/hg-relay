@@ -22,7 +22,9 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 10000);
 camera.position.set(2000, 1600, 2000);
-new OrbitControls(camera, renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
 
 /* ======================
    SKY
@@ -53,21 +55,41 @@ scene.add(new THREE.AmbientLight(0x404060, 0.4));
 const playerGroup = new THREE.Group();
 scene.add(playerGroup);
 
-function makePlayerDot() {
-	const canvas = document.createElement("canvas");
-	canvas.width = 128;
-	canvas.height = 32;
-	const ctx = canvas.getContext("2d");
+const DOT_RADIUS = 6;          // visual size
+const HITBOX_RADIUS = 40;      // clickable size (mobile friendly)
 
-	const tex = new THREE.CanvasTexture(canvas);
-	const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
-	const sprite = new THREE.Sprite(mat);
-	sprite.scale.set(120, 30, 1);
-	sprite.userData = { ctx, tex, lastHealth: -1 };
-	return sprite;
+function makePlayerMarker() {
+	const group = new THREE.Group();
+
+	// Visible dot
+	const dot = new THREE.Mesh(
+		new THREE.SphereGeometry(DOT_RADIUS, 16, 16),
+		new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+	);
+	group.add(dot);
+
+	// Invisible hitbox
+	const hitbox = new THREE.Mesh(
+		new THREE.SphereGeometry(HITBOX_RADIUS, 16, 16),
+		new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
+	);
+	hitbox.userData.isHitbox = true;
+	group.add(hitbox);
+
+	group.userData = {
+		dot,
+		hitbox,
+		lastHealth: -1
+	};
+
+	return group;
 }
 
-const playerSprites = new Map();
+const playerMarkers = new Map();
+
+/* ======================
+   PLAYER UPDATES
+====================== */
 
 function updatePlayers(data) {
 	const seen = new Set();
@@ -75,31 +97,21 @@ function updatePlayers(data) {
 	for (const p of data) {
 		seen.add(p.id);
 
-		if (!playerSprites.has(p.id)) {
-			const s = makePlayerDot();
-			playerGroup.add(s);
-			playerSprites.set(p.id, s);
+		if (!playerMarkers.has(p.id)) {
+			const m = makePlayerMarker();
+			playerGroup.add(m);
+			playerMarkers.set(p.id, m);
 		}
 
-		const s = playerSprites.get(p.id);
-		s.position.set(p.x, 50, p.z);
-
-		if (s.userData.lastHealth !== p.health) {
-			const ctx = s.userData.ctx;
-			ctx.clearRect(0, 0, 128, 32);
-			ctx.fillStyle = "#000";
-			ctx.fillRect(0, 0, 128, 32);
-			ctx.fillStyle = "#0f0";
-			ctx.fillRect(2, 2, (p.health / p.maxHealth) * 124, 28);
-			s.userData.tex.needsUpdate = true;
-			s.userData.lastHealth = p.health;
-		}
+		const m = playerMarkers.get(p.id);
+		m.position.set(p.x, 20, p.z);
+		m.userData.playerId = p.id;
 	}
 
-	for (const [id, sprite] of playerSprites) {
+	for (const [id, marker] of playerMarkers) {
 		if (!seen.has(id)) {
-			playerGroup.remove(sprite);
-			playerSprites.delete(id);
+			playerGroup.remove(marker);
+			playerMarkers.delete(id);
 		}
 	}
 }
@@ -116,6 +128,40 @@ setInterval(async () => {
 }, 200);
 
 /* ======================
+   CLICK / TOUCH TRACKING
+====================== */
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let trackedMarker = null;
+
+function handlePointer(event) {
+	const rect = renderer.domElement.getBoundingClientRect();
+
+	const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+	const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+
+	pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+	pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+	raycaster.setFromCamera(pointer, camera);
+
+	const hitboxes = [];
+	playerMarkers.forEach(m => hitboxes.push(m.userData.hitbox));
+
+	const hits = raycaster.intersectObjects(hitboxes, false);
+
+	if (hits.length > 0) {
+		trackedMarker = hits[0].object.parent;
+	} else {
+		trackedMarker = null;
+	}
+}
+
+renderer.domElement.addEventListener("click", handlePointer);
+renderer.domElement.addEventListener("touchstart", handlePointer, { passive: true });
+
+/* ======================
    ANIMATE
 ====================== */
 
@@ -129,6 +175,13 @@ function animate() {
 		dirLight.intensity = lighting.brightness * 1.2;
 	}
 
+	// Smooth camera tracking
+	if (trackedMarker) {
+		const target = trackedMarker.position.clone();
+		controls.target.lerp(target, 0.1);
+	}
+
+	controls.update();
 	renderer.render(scene, camera);
 }
 
