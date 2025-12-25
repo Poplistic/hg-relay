@@ -111,6 +111,8 @@ const players = new Map();
 
 function makePlayer(){
 	const g = new THREE.Group();
+
+	// Player body
 	const body = new THREE.Mesh(
 		new THREE.SphereGeometry(10,24,24),
 		new THREE.MeshStandardMaterial({
@@ -120,6 +122,18 @@ function makePlayer(){
 		})
 	);
 	g.add(body);
+
+	// Direction line
+	const dirMaterial = new THREE.LineBasicMaterial({ color: 0xffa0aa });
+	const points = [];
+	points.push(new THREE.Vector3(0, 0, 0));     // start at player center
+	points.push(new THREE.Vector3(0, 0, -100));  // forward line
+	const dirGeometry = new THREE.BufferGeometry().setFromPoints(points);
+	const dirLine = new THREE.Line(dirGeometry, dirMaterial);
+	dirLine.rotation.x = Math.PI / 2; // align with world
+	g.add(dirLine);
+
+	g.userData = { dirLine };
 	return g;
 }
 
@@ -131,6 +145,11 @@ async function updatePlayers(){
 	ui.innerHTML="<b>Tributes</b>";
 	const alive = new Set();
 
+	const m = players.get(p.id);
+	m.position.set(p.x, p.y+20, p.z);
+	m.rotation.y = p.yaw;
+	m.userData.dirLine.rotation.z = p.pitch;
+	
 	for(const p of data){
 		alive.add(p.id);
 		if(!players.has(p.id)){
