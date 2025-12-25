@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fallen Tributes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body { margin:0; background:#111; color:white; font-family:system-ui,sans-serif; padding:20px; }
+h1 { text-align:center; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:20px; max-width:1200px; margin:auto; }
+.card { background:rgba(30,30,30,.8); border-radius:12px; padding:12px; text-align:center; }
+img { width:150px; height:150px; border-radius:50%; border:4px solid #444; }
+.name { margin:8px 0 4px; font-size:18px; font-weight:bold; }
+.order { color:#aaa; font-size:14px; }
+#reset { position:fixed; bottom:20px; right:20px; padding:12px 24px; font-size:16px; background:#c00; color:white; border:none; border-radius:8px; cursor:pointer; display:none; }
+</style>
+</head>
+<body>
+<h1>Fallen Tributes</h1>
+<div id="grid" class="grid"></div>
+<button id="reset">Admin Reset</button>
+
+<script>
+const ALLOWED_IP = "192.168.1.48";  // Replace with your actual IP
+
+async function checkIP() {
+  const ip = await fetch("https://api.ipify.org?format=json").then(r => r.json()).then(d => d.ip);
+  if (ip === ALLOWED_IP) {
+    document.getElementById("reset").style.display = "block";
+  }
+}
+
+async function loadFallen(){
+  const res = await fetch("/dead");
+  if (!res.ok) return;
+  const data = await res.json();
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  data.reverse().forEach((p, i) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const img = document.createElement("img");
+    img.src = `https://www.roblox.com/bust-thumbnail/image?userId=${p.id}&width=420&height=420&format=png`;
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = p.name;
+    const order = document.createElement("div");
+    order.className = "order";
+    order.textContent = `${data.length - i}th Fallen`;
+    card.append(img, name, order);
+    grid.appendChild(card);
+  });
+}
+
+document.getElementById("reset").addEventListener("click", async () => {
+  if (confirm("Reset all fallen tributes?")) {
+    await fetch("/reset-dead", { method: "POST" });
+    loadFallen();
+  }
+});
+
+checkIP();
+loadFallen();
+setInterval(loadFallen, 5000);
+</script>
+</body>
+</html>
