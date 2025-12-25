@@ -11,22 +11,18 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    font-family: system-ui,Segoe UI,sans-serif;
     background: #050001;
+    font-family: system-ui, Segoe UI, sans-serif;
     color: #ffe8ee;
 }
-#hud {
+#ui {
     position: fixed;
     top: 16px;
     left: 16px;
-    z-index: 10;
-}
-.ui {
-    min-width: 180px;
-    color: #ffe8ee;
     background: rgba(20,5,10,0.35);
-    border-radius: 16px;
+    border-radius: 14px;
     padding: 12px;
+    z-index: 10;
 }
 .name {
     margin-top: 6px;
@@ -37,19 +33,6 @@ html, body {
 }
 .name:hover {
     background: rgba(255,120,140,0.28);
-}
-#killFeed {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    width: 300px;
-    max-height: 400px;
-    overflow-y: auto;
-    font-size: 13px;
-    line-height: 1.4;
-    background: rgba(20,5,10,0.35);
-    border-radius: 10px;
-    padding: 12px;
 }
 </style>
 
@@ -62,8 +45,8 @@ html, body {
 </script>
 </head>
 <body>
-<div id="hud"><div class="ui" id="ui"></div></div>
-<div id="killFeed"></div>
+
+<div id="ui"></div>
 
 <script type="module">
 import * as THREE from "three";
@@ -75,12 +58,13 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
-/* ================= SCENE ================= */
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050001);
-
+/* ================= CAMERAS ================= */
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 20000);
 camera.position.set(0, 1200, 1800);
+
+/* ================= SCENES ================= */
+const scene = new THREE.Scene();           // world (affected)
+const overlayScene = new THREE.Scene();    // sprites (clean)
 
 /* ================= LIGHTING ================= */
 scene.add(new THREE.AmbientLight(0xffffff, 0.35));
@@ -89,235 +73,152 @@ sun.position.set(3000, 6000, 2000);
 scene.add(sun);
 
 /* ================= ARENA ================= */
-const arenaGroup = new THREE.Group();
-scene.add(arenaGroup);
-
 new OBJLoader().load("/arena.obj", obj => {
-    obj.traverse(n => {
-        if (n.isMesh) {
+    obj.traverse(n=>{
+        if(n.isMesh){
             n.material = new THREE.MeshStandardMaterial({
                 color: 0x5a141d,
                 roughness: 0.65,
-                metalness: 0.08,
                 emissive: 0x2a060b,
                 emissiveIntensity: 0.35
             });
         }
     });
-    obj.scale.setScalar(1);
-    arenaGroup.add(obj);
+    scene.add(obj);
 });
 
-/* ================= UI ================= */
-const ui = document.getElementById("ui");
-const killFeedEl = document.getElementById("killFeed");
-
-/* ================= POST FX + FLOOR SHADER ================= */
+/* ================= POST PROCESS ================= */
 const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight);
 rt.depthTexture = new THREE.DepthTexture();
 
 const postScene = new THREE.Scene();
-const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const postCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
 
 const postMat = new THREE.ShaderMaterial({
-  uniforms: {
-    tColor: { value: rt.texture },
-    tDepth: { value: rt.depthTexture },
-    res: { value: new THREE.Vector2(innerWidth, innerHeight) },
-    near: { value: camera.near },
-    far: { value: camera.far },
-    time: { value: 0 },
-    floorColor: { value: new THREE.Color(0x220005) },
-    lineColor: { value: new THREE.Color(0xff4050) }
-  },
-  vertexShader: `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = vec4(position.xy, 0., 1.);
-    }
-  `,
-  fragmentShader: `
-    precision highp float;
-    varying vec2 vUv;
-    uniform sampler2D tColor;
-    uniform sampler2D tDepth;
-    uniform vec2 res;
-    uniform float near;
-    uniform float far;
-    uniform float time;
-    uniform vec3 floorColor;
-    uniform vec3 lineColor;
+uniforms:{
+    tColor:{value:rt.texture},
+    tDepth:{value:rt.depthTexture},
+    res:{value:new THREE.Vector2(innerWidth, innerHeight)},
+    near:{value:camera.near},
+    far:{value:camera.far}
+},
+vertexShader:`
+varying vec2 vUv;
+void main(){
+    vUv=uv;
+    gl_Position=vec4(position.xy,0.,1.);
+}`,
+fragmentShader:`
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tColor;
+uniform sampler2D tDepth;
+uniform float near;
+uniform float far;
 
-    float lin(float d) {
-      float z = d * 2.0 - 1.0;
-      return (2.0 * near * far) / (far + near - z * (far - near));
-    }
+float linearize(float d){
+    float z=d*2.-1.;
+    return (2.*near*far)/(far+near-z*(far-near));
+}
 
-    void main() {
-      vec3 col = texture2D(tColor, vUv).rgb;
-      float d = lin(texture2D(tDepth, vUv).r) / far;
+void main(){
+    vec3 col=texture2D(tColor,vUv).rgb;
+    float d=linearize(texture2D(tDepth,vUv).r)/far;
 
-      vec2 px = 1.0 / res;
-      float e = abs(d - lin(texture2D(tDepth, vUv + vec2(px.x, 0.0)).r) / far)
-              + abs(d - lin(texture2D(tDepth, vUv + vec2(0.0, px.y)).r) / far);
-      col += e * vec3(1., 0.3, 0.4);
+    float edge =
+        abs(d - linearize(texture2D(tDepth,vUv+vec2(1./1024.,0.)).r)/far) +
+        abs(d - linearize(texture2D(tDepth,vUv+vec2(0.,1./1024.)).r)/far);
 
-      float grid = abs(sin(vUv.x * 80.0) * sin(vUv.y * 80.0));
-      vec3 floorEffect = mix(floorColor, lineColor, grid);
-      col = mix(col, floorEffect, smoothstep(0.0, 0.4, d));
-      col = mix(col, vec3(0.18, 0.02, 0.04), smoothstep(0.25, 0.9, d));
+    col += edge * vec3(1.,0.3,0.4);
+    col = mix(col, vec3(0.18,0.02,0.04), smoothstep(0.3,0.9,d));
 
-      gl_FragColor = vec4(col, 1.);
-    }
-  `
+    gl_FragColor=vec4(col,1.);
+}`
 });
-postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat));
+postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), postMat));
 
 /* ================= PLAYERS ================= */
 const players = new Map();
+const ui = document.getElementById("ui");
 
-async function makePlayer(p) {
+function makePlayer(p){
     const g = new THREE.Group();
 
-    // 2D bust
-    const texture = new THREE.TextureLoader().load(`/bust/${p.id}`, () => { texture.needsUpdate = true; });
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture }));
-    sprite.scale.set(50, 50, 1);
+    const tex = new THREE.TextureLoader().load(`/bust/${p.id}`);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex,
+        depthTest: false
+    }));
+    sprite.scale.set(60,60,1);
     g.add(sprite);
 
+    overlayScene.add(g);
     return g;
 }
 
-/* ================= UPDATE PLAYERS ================= */
-let follow = null;
-async function updatePlayers() {
-    const data = await fetch("/map").then(r => r.json());
-    ui.innerHTML = "<b>Tributes</b>";
-    const alive = new Set();
+async function updatePlayers(){
+    const data = await fetch("/map").then(r=>r.json());
+    ui.innerHTML="<b>Tributes</b>";
+    const alive=new Set();
 
-    for (const p of data) {
+    for(const p of data){
         alive.add(p.id);
-        if (!players.has(p.id)) {
-            const m = await makePlayer(p);
-            scene.add(m);
-            players.set(p.id, m);
+        if(!players.has(p.id)){
+            players.set(p.id, makePlayer(p));
         }
+        const m=players.get(p.id);
+        m.position.set(p.x,p.y+80,p.z);
 
-        const m = players.get(p.id);
-        m.position.set(p.x, p.y + 20, p.z);
-        m.rotation.y = p.yaw;
-
-        const d = document.createElement("div");
-        d.className = "name";
-        d.textContent = p.name;
-        d.onclick = () => follow = m;
+        const d=document.createElement("div");
+        d.className="name";
+        d.textContent=p.name;
         ui.appendChild(d);
     }
 
-    for (const [id, m] of players) {
-        if (!alive.has(id)) {
-            scene.remove(m);
+    for(const [id,m] of players){
+        if(!alive.has(id)){
+            overlayScene.remove(m);
             players.delete(id);
         }
     }
 }
-setInterval(updatePlayers, 200);
+setInterval(updatePlayers,200);
 
-/* ================= CAMERA CONTROLS ================= */
-const cam = { yaw:0, pitch:0, velocity:new THREE.Vector3(), accel:2.4, damping:0.88, baseSpeed:18, boost:3.0 };
-const keys = { w:false,a:false,s:false,d:false,shift:false };
-let rotating = false;
-
-renderer.domElement.addEventListener("mousedown", e => {
-    if(e.button===0){rotating=true;renderer.domElement.requestPointerLock();}
-});
-addEventListener("mouseup", ()=>{rotating=false;document.exitPointerLock();});
-addEventListener("mousemove", e=>{
-    if(rotating && document.pointerLockElement){
-        cam.yaw -= e.movementX*0.002;
-        cam.pitch = Math.max(-1.4,Math.min(1.4,cam.pitch-e.movementY*0.002));
+/* ================= CAMERA ================= */
+const cam={yaw:0,pitch:0,vel:new THREE.Vector3()};
+addEventListener("mousemove",e=>{
+    if(document.pointerLockElement){
+        cam.yaw-=e.movementX*0.002;
+        cam.pitch=Math.max(-1.4,Math.min(1.4,cam.pitch-e.movementY*0.002));
     }
 });
-addEventListener("keydown", e=>{
-    if(e.code==="KeyW") keys.w=true;
-    if(e.code==="KeyA") keys.a=true;
-    if(e.code==="KeyS") keys.s=true;
-    if(e.code==="KeyD") keys.d=true;
-    if(e.code==="ShiftLeft") keys.shift=true;
-    if("KeyWKeyAKeySKeyD".includes(e.code)) follow=null;
-});
-addEventListener("keyup", e=>{
-    if(e.code==="KeyW") keys.w=false;
-    if(e.code==="KeyA") keys.a=false;
-    if(e.code==="KeyS") keys.s=false;
-    if(e.code==="KeyD") keys.d=false;
-    if(e.code==="ShiftLeft") keys.shift=false;
-});
+renderer.domElement.onclick=()=>renderer.domElement.requestPointerLock();
 
-/* ================= SOCKET.IO KILL FEED ================= */
-const socket = io();
-socket.on("kill:feed", feed => {
-    killFeedEl.innerHTML = "";
-    feed.forEach(item=>{
-        const div = document.createElement("div");
-        div.textContent = item.text;
-        killFeedEl.appendChild(div);
-    });
-});
-
-/* ================= ANIMATION LOOP ================= */
+/* ================= LOOP ================= */
 function animate(){
     requestAnimationFrame(animate);
 
     camera.rotation.order="YXZ";
-    camera.rotation.y = cam.yaw;
-    camera.rotation.x = cam.pitch;
+    camera.rotation.y=cam.yaw;
+    camera.rotation.x=cam.pitch;
 
-    const forward = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
-    const right = new THREE.Vector3(1,0,0).applyEuler(camera.rotation);
-
-    let mult = cam.baseSpeed;
-    if(keys.shift) mult *= cam.boost;
-
-    if(keys.w) cam.velocity.addScaledVector(forward, cam.accel*mult);
-    if(keys.s) cam.velocity.addScaledVector(forward, -cam.accel*mult);
-    if(keys.a) cam.velocity.addScaledVector(right, -cam.accel*mult);
-    if(keys.d) cam.velocity.addScaledVector(right, cam.accel*mult);
-
-    cam.velocity.multiplyScalar(cam.damping);
-    camera.position.add(cam.velocity);
-
-    if(follow){
-        const t = follow.position.clone();
-        const off = new THREE.Vector3(0,140,-320).applyEuler(camera.rotation);
-        camera.position.lerp(t.add(off),0.08);
-        cam.velocity.set(0,0,0);
+    for(const [,p] of players){
+        p.quaternion.copy(camera.quaternion);
     }
 
-    // Make all bust sprites face camera
-    for(const [, m] of players){
-        m.children.forEach(c=>{
-            if(c.isSprite) c.quaternion.copy(camera.quaternion);
-        });
-    }
-
-    // Render scene to target
     renderer.setRenderTarget(rt);
-    renderer.render(scene, camera);
+    renderer.render(scene,camera);
     renderer.setRenderTarget(null);
-    postMat.uniforms.time.value += 0.016;
-    renderer.render(postScene, postCam);
+    renderer.render(postScene,postCam);
+    renderer.render(overlayScene,camera);
 }
 animate();
 
-addEventListener("resize", ()=>{
-    renderer.setSize(innerWidth, innerHeight);
-    camera.aspect = innerWidth/innerHeight;
+addEventListener("resize",()=>{
+    renderer.setSize(innerWidth,innerHeight);
+    camera.aspect=innerWidth/innerHeight;
     camera.updateProjectionMatrix();
 });
 </script>
-
-<script src="/socket.io/socket.io.js"></script>
 </body>
 </html>
