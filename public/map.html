@@ -112,6 +112,77 @@ new OBJLoader().load("/arena.obj", obj => {
 const ui = document.getElementById("ui");
 const killFeedEl = document.getElementById("killFeed");
 
+/* ================= POST FX + FLOOR SHADER ================= */
+const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight);
+rt.depthTexture = new THREE.DepthTexture();
+
+const postScene = new THREE.Scene();
+const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// Fullscreen quad material
+const postMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tColor: { value: rt.texture },
+    tDepth: { value: rt.depthTexture },
+    res: { value: new THREE.Vector2(innerWidth, innerHeight) },
+    near: { value: camera.near },
+    far: { value: camera.far },
+    time: { value: 0 },
+    floorColor: { value: new THREE.Color(0x220005) },
+    lineColor: { value: new THREE.Color(0xff4050) }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(position.xy, 0., 1.);
+    }
+  `,
+  fragmentShader: `
+    precision highp float;
+    varying vec2 vUv;
+
+    uniform sampler2D tColor;
+    uniform sampler2D tDepth;
+    uniform vec2 res;
+    uniform float near;
+    uniform float far;
+    uniform float time;
+    uniform vec3 floorColor;
+    uniform vec3 lineColor;
+
+    float lin(float d) {
+      float z = d * 2.0 - 1.0;
+      return (2.0 * near * far) / (far + near - z * (far - near));
+    }
+
+    void main() {
+      vec3 col = texture2D(tColor, vUv).rgb;
+      float d = lin(texture2D(tDepth, vUv).r) / far;
+
+      // Edge / depth highlight
+      vec2 px = 1.0 / res;
+      float e = abs(d - lin(texture2D(tDepth, vUv + vec2(px.x, 0.0)).r) / far)
+              + abs(d - lin(texture2D(tDepth, vUv + vec2(0.0, px.y)).r) / far);
+      col += e * vec3(1., 0.3, 0.4);
+
+      // Floor shader (grid pattern)
+      float grid = abs(sin(vUv.x * 80.0) * sin(vUv.y * 80.0));
+      vec3 floorEffect = mix(floorColor, lineColor, grid);
+
+      // Blend floor pattern based on depth (only near the ground)
+      col = mix(col, floorEffect, smoothstep(0.0, 0.4, d));
+
+      // Subtle fog
+      col = mix(col, vec3(0.18, 0.02, 0.04), smoothstep(0.25, 0.9, d));
+
+      gl_FragColor = vec4(col, 1.);
+    }
+  `
+});
+
+postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat));
+    
 /* ================= PLAYERS ================= */
 const players = new Map();
 function makePlayer() {
@@ -252,6 +323,12 @@ function animate() {
 }
 animate();
 
+postMat.uniforms.time.value += 0.016; // Animate shader over time if desired
+renderer.setRenderTarget(rt);
+renderer.render(scene, camera);
+renderer.setRenderTarget(null);
+renderer.render(postScene, postCam);
+    
 addEventListener("resize", () => {
     renderer.setSize(innerWidth, innerHeight);
     camera.aspect = innerWidth / innerHeight;
