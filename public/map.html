@@ -119,33 +119,7 @@ function makePlayer(){
 			emissiveIntensity:.7
 		})
 	);
-	const camDir = new THREE.Mesh(
-		new THREE.ConeGeometry(18,70,32),
-		new THREE.MeshBasicMaterial({
-			color:0xffa0aa,
-			transparent:true,
-			opacity:.45,
-			depthWrite:false
-		})
-	);
-	camDir.rotation.x = Math.PI/2;
-	camDir.position.z = -40;
-
-	const vision = new THREE.Mesh(
-		new THREE.ConeGeometry(160,420,48,1,true),
-		new THREE.MeshBasicMaterial({
-			color:0xff4050,
-			transparent:true,
-			opacity:.09,
-			side:THREE.DoubleSide,
-			depthWrite:false
-		})
-	);
-	vision.rotation.x = Math.PI/2;
-	vision.position.z = -210;
-
-	g.add(body,camDir,vision);
-	g.userData = { camDir, vision };
+	g.add(body);
 	return g;
 }
 
@@ -167,8 +141,6 @@ async function updatePlayers(){
 		const m = players.get(p.id);
 		m.position.set(p.x,p.y+20,p.z);
 		m.rotation.y = p.yaw;
-		m.userData.camDir.rotation.z = p.pitch;
-		m.userData.vision.rotation.z = p.pitch;
 
 		const d=document.createElement("div");
 		d.className="name";
