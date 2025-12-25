@@ -6,23 +6,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-	body { margin:0; overflow:hidden; background:black }
-	canvas { display:block }
+body {
+	margin:0;
+	overflow:hidden;
+	background:#02040a;
+}
+canvas { display:block }
 
-	.ui {
-		position:absolute;
-		color:white;
-		font-family:system-ui,sans-serif;
-		background:rgba(20,20,20,.65);
-		backdrop-filter: blur(6px);
-		border:1px solid rgba(255,255,255,.1);
-		border-radius:8px;
-		padding:8px;
-		font-size:12px;
-	}
-	
-	.name { cursor:pointer; padding:2px 0 }
-	.name:hover { color:#ffd700 }
+.ui {
+	position:absolute;
+	color:#aefcff;
+	font-family:system-ui,sans-serif;
+	background:linear-gradient(180deg,rgba(0,255,255,.18),rgba(0,60,60,.05));
+	backdrop-filter:blur(12px) saturate(150%);
+	border:1px solid rgba(0,255,255,.4);
+	border-radius:12px;
+	padding:10px;
+	font-size:12px;
+	box-shadow:0 0 25px rgba(0,255,255,.35), inset 0 0 30px rgba(0,255,255,.1);
+}
+
+.ui::before {
+	content:"";
+	position:absolute;
+	inset:0;
+	border-radius:12px;
+	background:repeating-linear-gradient(
+		180deg,
+		rgba(255,255,255,.04),
+		rgba(255,255,255,.04) 1px,
+		transparent 1px,
+		transparent 3px
+	);
+	pointer-events:none;
+}
+
+.name {
+	cursor:pointer;
+	padding:4px 6px;
+	border-radius:6px;
+}
+.name:hover {
+	background:rgba(0,255,255,.18);
+	box-shadow:0 0 12px rgba(0,255,255,.6);
+}
+
+input {
+	width:100%;
+	margin-top:6px;
+	background:rgba(0,0,0,.6);
+	border:1px solid rgba(0,255,255,.4);
+	color:#aefcff;
+	padding:6px;
+	border-radius:6px;
+	outline:none;
+}
 </style>
 
 <script type="importmap">
@@ -35,9 +73,23 @@
 </head>
 
 <body>
-	
-  <a href="/fallen.html" target="_blank" style="position:absolute; top:10px; right:10px; color:white; background:rgba(0,0,0,0.5); padding:8px 12px; border-radius:6px; font-size:14px; text-decoration:none;">Fallen Tributes</a>
-	
+
+<a href="/fallen.html" target="_blank"
+style="
+	position:absolute;
+	top:12px;
+	right:12px;
+	color:#aefcff;
+	background:linear-gradient(180deg,rgba(0,255,255,.25),rgba(0,80,80,.1));
+	border:1px solid rgba(0,255,255,.5);
+	padding:10px 16px;
+	border-radius:10px;
+	text-decoration:none;
+	box-shadow:0 0 20px rgba(0,255,255,.4);
+">
+Fallen Tributes
+</a>
+
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 <script type="module">
@@ -62,10 +114,12 @@ THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050508);
+scene.background = new THREE.Color(0x02040a);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 30000);
 camera.position.set(0,1200,1800);
@@ -73,7 +127,7 @@ camera.position.set(0,1200,1800);
 /* ======================
    LIGHTING
 ====================== */
-scene.add(new THREE.AmbientLight(0xffffff,0.35));
+scene.add(new THREE.AmbientLight(0xffffff,0.25));
 const sun = new THREE.DirectionalLight(0xffffff,1.1);
 sun.position.set(3000,6000,2000);
 scene.add(sun);
@@ -120,22 +174,57 @@ socket.on("chat:msg",m=>{
 });
 
 /* ======================
-   ARENA (BVH)
+   SHADERTOY HOLOGRAM
 ====================== */
-let arena = null;
-const arenaMeshes = [];
+const holoVertex = `
+varying vec3 vPos;
+void main(){
+	vPos = position;
+	gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+}
+`;
 
+const holoFragment = `
+uniform float iTime;
+uniform vec2 iResolution;
+varying vec3 vPos;
+
+float hash(float n){ return fract(sin(n)*43758.5453); }
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+	float scan = sin(vPos.y*0.15 + iTime*6.0)*0.04;
+	float noise = hash(vPos.y+iTime)*0.08;
+	float band = step(0.95,fract(vPos.y*0.08+iTime*0.6));
+	float alpha = 0.28 + scan + noise + band*0.12;
+	fragColor = vec4(0.0,1.0,1.0,alpha);
+}
+
+void main(){
+	mainImage(gl_FragColor, gl_FragCoord.xy);
+}
+`;
+
+/* ======================
+   ARENA
+====================== */
+let arenaMeshes = [];
 const loader = new OBJLoader();
 loader.load("/arena.obj", obj => {
 
 	obj.traverse(c=>{
 		if(c.isMesh){
 			c.geometry.computeVertexNormals();
-			c.geometry.computeBoundsTree(); // BVH BUILD
+			c.geometry.computeBoundsTree();
 
-			c.material = new THREE.MeshStandardMaterial({
-				color:0x888888,
-				roughness:0.9
+			c.material = new THREE.ShaderMaterial({
+				vertexShader:holoVertex,
+				fragmentShader:holoFragment,
+				transparent:true,
+				depthWrite:false,
+				uniforms:{
+					iTime:{value:0},
+					iResolution:{value:new THREE.Vector2(innerWidth,innerHeight)}
+				}
 			});
 
 			arenaMeshes.push(c);
@@ -143,12 +232,8 @@ loader.load("/arena.obj", obj => {
 	});
 
 	const box = new THREE.Box3().setFromObject(obj);
-	const center = box.getCenter(new THREE.Vector3());
-	obj.position.sub(center);
-
-	obj.scale.set(1,1,1);
+	obj.position.sub(box.getCenter(new THREE.Vector3()));
 	scene.add(obj);
-	arena = obj;
 });
 
 /* ======================
@@ -159,100 +244,58 @@ scene.add(group);
 const players = new Map();
 
 function makePlayer(){
-	const m = new THREE.Mesh(
-		new THREE.SphereGeometry(10,16,16),
-		new THREE.MeshStandardMaterial()
+	return new THREE.Mesh(
+		new THREE.SphereGeometry(10,32,32),
+		new THREE.ShaderMaterial({
+			vertexShader:holoVertex,
+			fragmentShader:`
+			uniform float iTime;
+			varying vec3 vPos;
+			void main(){
+				float p = sin(length(vPos)*0.6 - iTime*4.0);
+				float g = smoothstep(0.2,1.0,p);
+				gl_FragColor = vec4(0.0,0.6+g*0.4,1.0,1.0);
+			}`,
+			uniforms:{ iTime:{value:0} }
+		})
 	);
-
-	const arrow = new THREE.Mesh(
-		new THREE.ConeGeometry(6,20,8),
-		new THREE.MeshStandardMaterial({ color:0xffff00 })
-	);
-	arrow.rotation.x = Math.PI/2;
-	arrow.position.y = 35;
-	m.add(arrow);
-
-	m.userData = {
-		pos: new THREE.Vector3(),
-		vel: new THREE.Vector3(),
-		lookAngle: 0,
-		lookTarget: 0
-	};
-
-	return m;
 }
 
 /* ======================
-   SPECTATE TARGET
+   UPDATE PLAYERS
 ====================== */
-let spectating = null;
+let spectating=null;
 
-addEventListener("pointerdown",e=>{
-	const mouse = new THREE.Vector2(
-		(e.clientX/innerWidth)*2-1,
-		-(e.clientY/innerHeight)*2+1
-	);
-	const ray = new THREE.Raycaster();
-	ray.setFromCamera(mouse,camera);
-	const hit = ray.intersectObjects(group.children)[0];
-	if(hit) spectating = hit.object;
-});
-
-/* ======================
-   UPDATE FROM SERVER
-====================== */
 async function updatePlayers(){
 	const data = await fetch("/map").then(r=>r.json());
-
-	tributeUI.innerHTML = "<b>Tributes</b><br>";
-	const alive = new Set();
+	tributeUI.innerHTML="<b>Tributes</b><br>";
+	const alive=new Set();
 
 	for(const p of data){
 		alive.add(p.id);
-
 		if(!players.has(p.id)){
-			const m = makePlayer();
+			const m=makePlayer();
 			group.add(m);
 			players.set(p.id,m);
 		}
+		const m=players.get(p.id);
+		m.position.set(p.x,p.y,p.z);
 
-		const m = players.get(p.id);
-		const u = m.userData;
-
-		u.vel.set(p.x,p.y,p.z).sub(u.pos);
-		u.pos.set(p.x,p.y,p.z);
-
-		if(p.health > 66) m.material.color.set(0x00ff00);
-		else if(p.health > 33) m.material.color.set(0xffaa00);
-		else m.material.color.set(0xff0000);
-
-		if(p.lookX !== undefined){
-			u.lookTarget = -Math.atan2(p.lookX, p.lookZ);
-		}
-
-		const div = document.createElement("div");
-		div.className = "name";
-		div.textContent = p.name;
-		div.onclick = ()=> spectating = m;
-		tributeUI.appendChild(div);
+		const d=document.createElement("div");
+		d.className="name";
+		d.textContent=p.name;
+		d.onclick=()=>spectating=m;
+		tributeUI.appendChild(d);
 	}
 
 	for(const [id,m] of players){
 		if(!alive.has(id)){
 			group.remove(m);
 			players.delete(id);
-			if(m === spectating) spectating = null;
 		}
 	}
 }
 setInterval(updatePlayers,200);
-
-/* ======================
-   CAMERA COLLISION (BVH)
-====================== */
-const camRay = new THREE.Raycaster();
-const camDir = new THREE.Vector3();
-const camTarget = new THREE.Vector3();
 
 /* ======================
    LOOP
@@ -260,36 +303,11 @@ const camTarget = new THREE.Vector3();
 function animate(){
 	requestAnimationFrame(animate);
 
-	for(const m of group.children){
-		const u = m.userData;
-		m.position.lerp(u.pos,0.15);
-		u.lookAngle = THREE.MathUtils.lerp(u.lookAngle,u.lookTarget,0.25);
-		m.children[0].rotation.y = u.lookAngle;
-	}
-
-	if(spectating){
-		const u = spectating.userData;
-
-		const desiredOffset = new THREE.Vector3(
-			Math.sin(u.lookAngle) * -700,
-			450,
-			Math.cos(u.lookAngle) * -700
-		);
-
-		camTarget.copy(spectating.position).add(desiredOffset);
-
-		if(arenaMeshes.length){
-			camDir.subVectors(camTarget, spectating.position).normalize();
-			camRay.set(spectating.position, camDir);
-			const hits = camRay.intersectObjects(arenaMeshes, true);
-			if(hits.length && hits[0].distance < 700){
-				camTarget.copy(hits[0].point).addScaledVector(camDir, -40);
-			}
+	scene.traverse(o=>{
+		if(o.material?.uniforms?.iTime){
+			o.material.uniforms.iTime.value+=0.016;
 		}
-
-		camera.position.lerp(camTarget,0.1);
-		camera.lookAt(spectating.position.clone().add(new THREE.Vector3(0,120,0)));
-	}
+	});
 
 	renderer.render(scene,camera);
 }
@@ -299,9 +317,14 @@ animate();
    RESIZE
 ====================== */
 addEventListener("resize",()=>{
-	camera.aspect = innerWidth/innerHeight;
+	camera.aspect=innerWidth/innerHeight;
 	camera.updateProjectionMatrix();
-	renderer.setSize(innerWidth, innerHeight);
+	renderer.setSize(innerWidth,innerHeight);
+	scene.traverse(o=>{
+		if(o.material?.uniforms?.iResolution){
+			o.material.uniforms.iResolution.value.set(innerWidth,innerHeight);
+		}
+	});
 });
 </script>
 </body>
