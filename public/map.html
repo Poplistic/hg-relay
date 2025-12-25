@@ -91,9 +91,11 @@ new OBJLoader().load("/arena.obj", obj=>{
 	obj.traverse(n=>{
 		if(n.isMesh){
 			n.material = new THREE.MeshStandardMaterial({
-				color:0x3a0c12,
-				roughness:.9,
-				metalness:.05
+				color:0x5a141d,          // brighter but same hue family
+				roughness:.65,           // catches light better
+				metalness:.08,
+				emissive:0x2a060b,       // subtle self-illumination
+				emissiveIntensity:.35
 			});
 			n.receiveShadow = true;
 		}
