@@ -1,194 +1,209 @@
-import express from "express";
-import path from "path";
-import { fileURLToPath } from "url";
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>HG Spectator Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+	body { margin:0; overflow:hidden; background:black; }
+	.ui {
+		position:absolute;
+		color:white;
+		font-family:sans-serif;
+		background:rgba(0,0,0,.6);
+		padding:6px;
+		font-size:12px;
+	}
+</style>
+</head>
+<body>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
 
 /* ======================
-   PATH FIX
+   THREE SETUP
 ====================== */
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 15000);
+camera.position.set(2000,2000,2000);
+
+const controls = new OrbitControls(camera, renderer.domElement);
 
 /* ======================
-   ENV
+   GROUPS
 ====================== */
-
-const {
-	SESSION_TOKEN,
-	PORT = 10000
-} = process.env;
-
-if (!SESSION_TOKEN) throw new Error("SESSION_TOKEN missing");
+const playerGroup = new THREE.Group();
+const spectatorGroup = new THREE.Group();
+scene.add(playerGroup, spectatorGroup);
 
 /* ======================
-   EXPRESS
+   UI
 ====================== */
+const tributeUI = document.createElement("div");
+tributeUI.className="ui";
+tributeUI.style.top="10px";
+tributeUI.style.left="10px";
+document.body.appendChild(tributeUI);
 
-const app = express();
-app.use(express.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+const killUI = document.createElement("div");
+killUI.className="ui";
+killUI.style.top="10px";
+killUI.style.right="10px";
+document.body.appendChild(killUI);
+
+const chatUI = document.createElement("div");
+chatUI.className="ui";
+chatUI.style.bottom="10px";
+chatUI.style.left="10px";
+chatUI.innerHTML=`<div id="log" style="height:120px;overflow:auto"></div><input id="input" placeholder="chat" style="width:100%">`;
+document.body.appendChild(chatUI);
 
 /* ======================
-   SECURITY STATE
+   STATE
 ====================== */
-
-// Nonce per token
-const lastNonce = new Map();
-
-// Rate limit per token
-const RATE_WINDOW_MS = 1000;
-const MAX_REQUESTS_PER_WINDOW = 25;
-const requestTimes = new Map();
+const players = new Map();
+let tracked = null;
+let followMode = "behind";
 
 /* ======================
-   GAME LIMITS
+   PLAYER MARKER
 ====================== */
-
-const BOUNDS = {
-	minX: -5000,
-	maxX:  5000,
-	minZ: -5000,
-	maxZ:  5000
-};
-
-const MAX_SPEED = 300;
-const MAX_HEALTH = 1000;
-
-/* ======================
-   LIVE STATE
-====================== */
-
-let players = [];
-let lighting = {
-	clockTime: 12,
-	brightness: 2,
-	fogColor: [5, 9, 20],
-	fogDensity: 0.00035,
-	haze: 0,
-	sunDirection: [0, 1, 0]
-};
-
-const lastPositions = new Map();
-
-/* ======================
-   HELPERS
-====================== */
-
-function clamp(v, min, max) {
-	return Math.max(min, Math.min(max, v));
-}
-
-function rateLimitExceeded(token) {
-	const now = Date.now();
-	const list = requestTimes.get(token) || [];
-	const filtered = list.filter(t => now - t < RATE_WINDOW_MS);
-	filtered.push(now);
-	requestTimes.set(token, filtered);
-	return filtered.length > MAX_REQUESTS_PER_WINDOW;
-}
-
-function verify(req) {
-	const { token, nonce, timestamp } = req.body;
-
-	if (token !== SESSION_TOKEN) return false;
-	if (typeof nonce !== "number") return false;
-	if (Math.abs(Date.now() / 1000 - timestamp) > 10) return false;
-	if (rateLimitExceeded(token)) return false;
-
-	const last = lastNonce.get(token) ?? 0;
-	if (nonce <= last) return false;
-
-	lastNonce.set(token, nonce);
-	return true;
+function makePlayer() {
+	const dot = new THREE.Mesh(
+		new THREE.SphereGeometry(8),
+		new THREE.MeshBasicMaterial({ color:0x00ff00 })
+	);
+	const hit = new THREE.Mesh(
+		new THREE.SphereGeometry(40),
+		new THREE.MeshBasicMaterial({ transparent:true, opacity:0 })
+	);
+	dot.add(hit);
+	dot.userData.hit = hit;
+	dot.userData.arrow = new THREE.ArrowHelper(
+		new THREE.Vector3(0,0,1),
+		new THREE.Vector3(),
+		80,
+		0xffff00
+	);
+	dot.add(dot.userData.arrow);
+	return dot;
 }
 
 /* ======================
-   SANITY CHECKS
+   FETCH PLAYERS
 ====================== */
+async function updatePlayers() {
+	const data = await fetch("/map").then(r=>r.json());
+	tributeUI.innerHTML="<b>Tributes</b><br>"+data.map(p=>p.name).join("<br>");
 
-function sanitizePlayers(list) {
-	const now = Date.now();
-	const clean = [];
-
-	for (const p of list) {
-		if (
-			typeof p.id !== "number" ||
-			typeof p.x !== "number" ||
-			typeof p.z !== "number"
-		) continue;
-
-		p.x = clamp(p.x, BOUNDS.minX, BOUNDS.maxX);
-		p.z = clamp(p.z, BOUNDS.minZ, BOUNDS.maxZ);
-
-		p.maxHealth = clamp(p.maxHealth || 100, 1, MAX_HEALTH);
-		p.health = clamp(p.health || 0, 0, p.maxHealth);
-
-		const last = lastPositions.get(p.id);
-		if (last) {
-			const dt = Math.max((now - last.time) / 1000, 0.016);
-			const dx = p.x - last.x;
-			const dz = p.z - last.z;
-			const speed = Math.sqrt(dx * dx + dz * dz) / dt;
-
-			if (speed > MAX_SPEED) {
-				console.warn(`⚠️ Speed violation: ${p.id} (${speed.toFixed(1)})`);
-				continue;
-			}
+	for (const p of data) {
+		if (!players.has(p.id)) {
+			const m = makePlayer();
+			playerGroup.add(m);
+			players.set(p.id, m);
 		}
-
-		lastPositions.set(p.id, { x: p.x, z: p.z, time: now });
-		clean.push(p);
+		const m = players.get(p.id);
+		m.position.lerp(new THREE.Vector3(p.x,50,p.z),0.35);
 	}
-
-	return clean;
 }
 
 /* ======================
-   MAP ENDPOINTS
+   CLICK TRACK
 ====================== */
-
-app.post("/map", (req, res) => {
-	if (!verify(req)) return res.sendStatus(403);
-	if (!Array.isArray(req.body.players)) return res.sendStatus(400);
-
-	players = sanitizePlayers(req.body.players);
-	res.sendStatus(200);
-});
-
-app.get("/map", (_, res) => {
-	res.json(players);
+const ray = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+window.addEventListener("pointerdown", e=>{
+	mouse.x=(e.clientX/innerWidth)*2-1;
+	mouse.y=-(e.clientY/innerHeight)*2+1;
+	ray.setFromCamera(mouse,camera);
+	const hit = ray.intersectObjects(playerGroup.children,true)[0];
+	if (hit) tracked = hit.object.parent;
 });
 
 /* ======================
-   LIGHTING ENDPOINTS
+   FOLLOW CAM
 ====================== */
+window.addEventListener("keydown", e=>{
+	if (e.key==="1") followMode="behind";
+	if (e.key==="2") followMode="overhead";
+	if (e.key==="3") followMode="free";
+});
 
-app.post("/lighting", (req, res) => {
-	if (!verify(req)) return res.sendStatus(403);
+function follow() {
+	if (!tracked || followMode==="free") return;
+	const off = followMode==="behind"
+		? new THREE.Vector3(0,300,700)
+		: new THREE.Vector3(0,1200,0);
+	camera.position.lerp(tracked.position.clone().add(off),0.08);
+	camera.lookAt(tracked.position);
+}
 
-	const l = req.body.lighting;
-	if (l) {
-		lighting = {
-			clockTime: clamp(l.clockTime ?? lighting.clockTime, 0, 24),
-			brightness: clamp(l.brightness ?? lighting.brightness, 0, 10),
-			fogColor: Array.isArray(l.fogColor) ? l.fogColor.slice(0, 3) : lighting.fogColor,
-			fogDensity: clamp(l.fogDensity ?? lighting.fogDensity, 0, 1),
-			haze: clamp(l.haze ?? lighting.haze, 0, 10),
-			sunDirection: Array.isArray(l.sunDirection) ? l.sunDirection.slice(0, 3) : lighting.sunDirection
-		};
+/* ======================
+   SOCKET.IO
+====================== */
+const socket = io();
+
+socket.on("spectators:init", list=>{
+	list.forEach(s=>{
+		const m=new THREE.Mesh(
+			new THREE.SphereGeometry(12),
+			new THREE.MeshBasicMaterial({ color:s.color })
+		);
+		spectatorGroup.add(m);
+		m.userData.id=s.id;
+	});
+});
+
+socket.on("spectator:update", s=>{
+	const m=[...spectatorGroup.children].find(x=>x.userData.id===s.id);
+	if (m) m.position.set(s.pos.x,s.pos.y,s.pos.z);
+});
+
+socket.on("chat:msg", m=>{
+	const log=document.getElementById("log");
+	log.innerHTML+=`<div><b>${m.from}:</b> ${m.msg}</div>`;
+	log.scrollTop=log.scrollHeight;
+});
+
+document.getElementById("input").addEventListener("keydown",e=>{
+	if(e.key==="Enter"&&e.target.value){
+		socket.emit("chat:send",e.target.value);
+		e.target.value="";
 	}
-
-	res.sendStatus(200);
 });
 
-app.get("/lighting", (_, res) => {
-	res.json(lighting);
+socket.on("kill:feed", list=>{
+	killUI.innerHTML="<b>Kills</b><br>"+list.map(k=>`${k.killer} ☠ ${k.victim}`).join("<br>");
 });
 
 /* ======================
-   START
+   SEND CAMERA
 ====================== */
+setInterval(()=>{
+	const dir=new THREE.Vector3();
+	camera.getWorldDirection(dir);
+	socket.emit("spectator:update",{ pos:camera.position, dir });
+},120);
 
-app.listen(PORT, () => {
-	console.log(`🚀 HG Relay hardened on port ${PORT}`);
-});
+/* ======================
+   LOOP
+====================== */
+async function animate(){
+	requestAnimationFrame(animate);
+	await updatePlayers();
+	follow();
+	controls.update();
+	renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
