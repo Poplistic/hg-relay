@@ -1,126 +1,99 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="utf-8">
-<title>Capitol Dome Control</title>
-<style>
-body { margin:0; overflow:hidden; background:black; }
-#ui {
-  position:absolute;
-  top:10px;
-  left:10px;
-  background:#111;
-  color:white;
-  padding:10px;
-  z-index:10;
-}
-input,button {
-  width:200px;
-  margin-top:5px;
-}
-</style>
+  <title>Dome Editor</title>
+  <style>
+    body {
+      background: #111;
+      color: white;
+      font-family: Arial;
+      text-align: center;
+    }
+    canvas {
+      background: #222;
+      border-radius: 50%;
+      cursor: grab;
+    }
+    input {
+      margin: 5px;
+    }
+  </style>
 </head>
 <body>
 
-<div id="ui">
-  <input id="asset" placeholder="Roblox Image ID">
-  <button onclick="addImage()">Add Image</button>
-</div>
+<h2>Roblox Dome Controller</h2>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.160/build/three.min.js"></script>
+<input id="imageId" placeholder="Roblox Image ID"><br>
+Scale <input type="range" id="scale" min="0.2" max="3" step="0.01" value="1"><br>
+Rotation <input type="range" id="rotation" min="0" max="360" value="0"><br>
+<button onclick="send()">Apply</button>
+
+<br><br>
+<canvas id="canvas" width="400" height="400"></canvas>
+
 <script>
-const API = "/"; // same origin
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
-/* ================= THREE ================= */
+let img = new Image();
+let offsetX = 0;
+let offsetY = 0;
+let dragging = false;
+let lastX, lastY;
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 1000);
-camera.position.set(0,80,220);
-
-const renderer = new THREE.WebGLRenderer({ antialias:true });
-renderer.setSize(innerWidth, innerHeight);
-document.body.appendChild(renderer.domElement);
-
-scene.add(new THREE.AmbientLight(0xffffff));
-
-/* ================= DOME ================= */
-
-const RADIUS = 120;
-for(let i=0;i<24;i++){
-  const g = new THREE.BoxGeometry(30,60,2);
-  const m = new THREE.MeshBasicMaterial({ color:0x222222 });
-  const p = new THREE.Mesh(g,m);
-  const a = i/24*Math.PI*2;
-  p.position.set(Math.cos(a)*RADIUS,0,Math.sin(a)*RADIUS);
-  p.rotation.y = -a;
-  scene.add(p);
-}
-
-/* ================= IMAGES ================= */
-
-let active = null;
-
-function addImage(){
-  const geo = new THREE.PlaneGeometry(40,20);
-  const mat = new THREE.MeshBasicMaterial({
-    color:0xffffff,
-    side:THREE.DoubleSide
-  });
-
-  const mesh = new THREE.Mesh(geo,mat);
-  mesh.position.set(0,0,RADIUS);
-  scene.add(mesh);
-
-  mesh.userData = {
-    id: crypto.randomUUID(),
-    assetId: document.getElementById("asset").value,
-    angle: 0,
-    scale: 1
-  };
-
-  active = mesh;
-  sync(mesh);
-}
-
-/* ================= CONTROLS ================= */
-
-window.addEventListener("mousemove", e=>{
-  if(!active) return;
-  active.rotation.y += e.movementX * 0.005;
-  active.userData.angle = active.rotation.y;
-  sync(active);
-});
-
-window.addEventListener("wheel", e=>{
-  if(!active) return;
-  active.scale.multiplyScalar(e.deltaY > 0 ? 0.95 : 1.05);
-  active.userData.scale = active.scale.x;
-  sync(active);
-});
-
-/* ================= SYNC ================= */
-
-function sync(mesh){
-  fetch("/image",{
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body:JSON.stringify(mesh.userData)
-  });
-}
-
-/* ================= LOOP ================= */
-
-function animate(){
-  requestAnimationFrame(animate);
-  renderer.render(scene,camera);
-}
-animate();
-
-window.onresize = ()=>{
-  camera.aspect = innerWidth/innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+canvas.onmousedown = e => {
+  dragging = true;
+  lastX = e.offsetX;
+  lastY = e.offsetY;
 };
+
+canvas.onmouseup = () => dragging = false;
+
+canvas.onmousemove = e => {
+  if (!dragging) return;
+  offsetX += (e.offsetX - lastX) / canvas.width;
+  offsetY += (e.offsetY - lastY) / canvas.height;
+  lastX = e.offsetX;
+  lastY = e.offsetY;
+  draw();
+};
+
+function draw() {
+  ctx.clearRect(0,0,400,400);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(200,200,200,0,Math.PI*2);
+  ctx.clip();
+
+  const scale = document.getElementById("scale").value;
+  const rotation = document.getElementById("rotation").value;
+
+  ctx.translate(200,200);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.scale(scale, scale);
+  ctx.drawImage(img, -200 + offsetX*400, -200 + offsetY*400, 400, 400);
+  ctx.restore();
+}
+
+document.getElementById("imageId").onchange = () => {
+  img.src = `https://www.roblox.com/asset/?id=${imageId.value}`;
+  img.onload = draw;
+};
+
+function send() {
+  fetch("https://YOUR-RENDER-URL.onrender.com/update-dome", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      apiKey: "YOUR_API_KEY",
+      imageId: imageId.value,
+      offsetX,
+      offsetY,
+      scale: scale.value,
+      rotation: rotation.value
+    })
+  });
+}
 </script>
 
 </body>
