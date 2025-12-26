@@ -81,11 +81,11 @@ document.getElementById("imageId").onchange = () => {
 };
 
 function send() {
-  fetch("https://YOUR-RENDER-URL.onrender.com/update-dome", {
+  fetch("https://games-k04d.onrender.com/update-dome", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      apiKey: "YOUR_API_KEY",
+      apiKey: "5a079075fb487a6c345021e90fefed64",
       imageId: imageId.value,
       offsetX,
       offsetY,
