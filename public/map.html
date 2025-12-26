@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>HG Spectator</title>
+<title>Spectator Map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -11,111 +11,146 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #050001;
+    background: radial-gradient(circle at center, #120308, #050001);
     font-family: system-ui, Segoe UI, sans-serif;
     color: #ffe8ee;
 }
+
 #ui {
     position: fixed;
     top: 16px;
     left: 16px;
-    background: rgba(20,5,10,0.55);
-    backdrop-filter: blur(8px);
-    border-radius: 14px;
-    padding: 12px 14px;
+    background: linear-gradient(180deg, rgba(40,10,18,0.75), rgba(10,2,6,0.6));
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    padding: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
     z-index: 10;
-    min-width: 180px;
 }
-#ui b {
-    font-size: 14px;
-    letter-spacing: .08em;
-    opacity: .85;
-}
+
 .name {
     margin-top: 6px;
-    padding: 6px 8px;
-    border-radius: 10px;
-    background: rgba(255,80,100,0.14);
-    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: linear-gradient(90deg, rgba(255,80,100,0.25), rgba(255,80,100,0.05));
+    box-shadow: inset 0 0 12px rgba(255,80,100,0.25);
+    font-size: 14px;
 }
-#hint {
-    position: fixed;
-    bottom: 14px;
-    left: 50%;
-    transform: translateX(-50%);
-    opacity: .6;
-    font-size: 12px;
-}
+
 canvas { display:block }
 </style>
 
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "socket.io-client": "https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.esm.min.js"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
   }
 }
 </script>
 </head>
 <body>
 
-<div id="ui"><b>TRIBUTES</b></div>
-<div id="hint">Click to control • WASD move • Mouse look</div>
+<div id="ui"><b>Tributes</b></div>
 
 <script type="module">
 import * as THREE from "three";
 import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
-import { io } from "socket.io-client";
-
-/* ================= CONFIG ================= */
-const params = new URLSearchParams(location.search);
-const SERVER_ID = params.get("serverId") || "default";
 
 /* ================= RENDERER ================= */
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 /* ================= SCENE ================= */
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050001);
+scene.fog = new THREE.Fog(0x050001, 1200, 6500);
+
+/* ================= SKY GRADIENT ================= */
+const skyGeo = new THREE.SphereGeometry(10000, 32, 32);
+const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+        top:    { value: new THREE.Color(0x2b0b15) },
+        bottom: { value: new THREE.Color(0x050001) }
+    },
+    vertexShader: `
+        varying vec3 vPos;
+        void main(){
+            vPos = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        }
+    `,
+    fragmentShader: `
+        varying vec3 vPos;
+        uniform vec3 top;
+        uniform vec3 bottom;
+        void main(){
+            float h = normalize(vPos).y * 0.5 + 0.5;
+            gl_FragColor = vec4(mix(bottom, top, h), 1.0);
+        }
+    `
+});
+scene.add(new THREE.Mesh(skyGeo, skyMat));
 
 /* ================= CAMERA ================= */
-const camera = new THREE.PerspectiveCamera(65, innerWidth/innerHeight, 1, 25000);
-camera.position.set(0, 900, 1600);
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 20000);
+camera.position.set(0, 900, 1700);
 
 /* ================= LIGHTING ================= */
-scene.add(new THREE.AmbientLight(0xffd6dc, 0.45));
+scene.add(new THREE.AmbientLight(0xffb6c1, 0.35));
 
-const sun = new THREE.DirectionalLight(0xffb0c0, 1.6);
-sun.position.set(6000, 8000, 4000);
+const sun = new THREE.DirectionalLight(0xffc0cc, 1.6);
+sun.position.set(5000, 7000, 4000);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
 scene.add(sun);
+
+const rim = new THREE.DirectionalLight(0xff5070, 0.6);
+rim.position.set(-3000, 2000, -4000);
+scene.add(rim);
 
 /* ================= FLOOR ================= */
 const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(8000, 8000),
+    new THREE.PlaneGeometry(7000, 7000, 64, 64),
     new THREE.MeshStandardMaterial({
-        color: 0x2b070c,
-        roughness: 0.9
+        color: 0x2a070b,
+        roughness: 0.9,
+        metalness: 0.05
     })
 );
 floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
 scene.add(floor);
 
-/* ================= ARENA ================= */
-new OBJLoader().load("/arena.obj", obj => {
+/* ================= GRID OVERLAY ================= */
+const grid = new THREE.GridHelper(7000, 80, 0x66111f, 0x22060a);
+grid.material.transparent = true;
+grid.material.opacity = 0.25;
+scene.add(grid);
+
+/* ================= ARENA OBJ ================= */
+const loader = new OBJLoader();
+
+loader.load("/arena.obj", obj => {
     obj.traverse(n => {
         if (n.isMesh) {
             n.material = new THREE.MeshStandardMaterial({
-                color: 0x6f1824,
-                roughness: 0.7,
-                emissive: 0x24070c,
-                emissiveIntensity: 0.3
+                color: 0x7a1b28,
+                roughness: 0.55,
+                metalness: 0.08,
+                emissive: 0x2a060c,
+                emissiveIntensity: 0.45
             });
+            n.receiveShadow = true;
         }
     });
+
     obj.scale.setScalar(10);
     obj.rotation.y = Math.PI;
     scene.add(obj);
@@ -138,26 +173,16 @@ function makePlayer(p){
     return sprite;
 }
 
-function updateUI(list){
-    ui.innerHTML = "<b>TRIBUTES</b>";
-    for(const p of list){
-        const d = document.createElement("div");
-        d.className = "name";
-        d.textContent = p.name;
-        ui.appendChild(d);
-    }
-}
+async function updatePlayers(){
+    let data;
+    try {
+        const r = await fetch("/map");
+        if(!r.ok) return;
+        data = await r.json();
+    } catch { return; }
 
-/* ================= SOCKET.IO ================= */
-const socket = io();
-
-socket.on("connect", () => {
-    socket.emit("join", SERVER_ID);
-});
-
-socket.on("map:update", data => {
+    ui.innerHTML = "<b>Tributes</b>";
     const alive = new Set();
-    updateUI(data);
 
     for(const p of data){
         alive.add(p.id);
@@ -166,17 +191,23 @@ socket.on("map:update", data => {
             players.set(p.id, makePlayer(p));
         }
 
-        const s = players.get(p.id);
-        s.position.set(p.x, p.y + 90, p.z);
+        const m = players.get(p.id);
+        m.position.set(p.x, p.y + 90, p.z);
+
+        const d = document.createElement("div");
+        d.className = "name";
+        d.textContent = p.name;
+        ui.appendChild(d);
     }
 
-    for(const [id,s] of players){
+    for(const [id,m] of players){
         if(!alive.has(id)){
-            scene.remove(s);
+            scene.remove(m);
             players.delete(id);
         }
     }
-});
+}
+setInterval(updatePlayers, 250);
 
 /* ================= CONTROLS ================= */
 const cam = { yaw:0, pitch:0 };
@@ -192,19 +223,14 @@ addEventListener("mousemove", e=>{
         cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
     }
 });
-
 renderer.domElement.onclick = () =>
     renderer.domElement.requestPointerLock();
 
 /* ================= LOOP ================= */
-let last = performance.now();
-
-function animate(now){
+function animate(){
     requestAnimationFrame(animate);
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
 
-    const speed = 1200 * dt;
+    const speed = 30;
 
     const forward = new THREE.Vector3(
         Math.sin(cam.yaw), 0, Math.cos(cam.yaw)
