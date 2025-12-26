@@ -3,11 +3,43 @@
 <head>
 <meta charset="UTF-8" />
 <title>Hunger Games Live Map</title>
+
 <style>
-  body { margin: 0; overflow: hidden; background: #0b0e14; }
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #0b0e14;
+}
+
+/* ===== KILL FEED ===== */
+#killfeed {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 260px;
+  font-family: monospace;
+  color: white;
+  pointer-events: none;
+}
+
+.kill {
+  background: rgba(0,0,0,0.65);
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border-left: 4px solid #ff4444;
+  animation: fadeout 6s forwards;
+}
+
+@keyframes fadeout {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
 </style>
 </head>
+
 <body>
+<div id="killfeed"></div>
 
 <script type="module">
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
@@ -69,7 +101,7 @@ function createNameTag(text) {
 function createPlayer(id) {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(1.5, 16, 16),
-    new THREE.MeshStandardMaterial({ color: 0x00ffcc, transparent: true })
+    new THREE.MeshStandardMaterial({ transparent: true })
   );
 
   mesh.material.color.setHSL(Math.random(), 0.8, 0.6);
@@ -92,9 +124,7 @@ function startDeath(player) {
   player.deathTime = performance.now();
   player.mesh.material.color.set(0xff0000);
 
-  if (followTarget === player.mesh) {
-    followTarget = null;
-  }
+  if (followTarget === player.mesh) followTarget = null;
 }
 
 async function updatePlayers() {
@@ -178,6 +208,31 @@ window.addEventListener("click", (e) => {
   if (hits.length) followTarget = hits[0].object;
 });
 
+/* ================= KILL FEED ================= */
+
+const killfeed = document.getElementById("killfeed");
+let lastEventTime = 0;
+
+async function updateKillFeed() {
+  const res = await fetch("/events");
+  const data = await res.json();
+
+  for (const e of data) {
+    if (e.time > lastEventTime) {
+      lastEventTime = e.time;
+
+      const div = document.createElement("div");
+      div.className = "kill";
+      div.textContent = `${e.killer} ⚔ ${e.victim}`;
+      killfeed.prepend(div);
+
+      setTimeout(() => div.remove(), 6000);
+    }
+  }
+}
+
+setInterval(updateKillFeed, 1000);
+
 /* ================= LOOP ================= */
 
 function animate() {
@@ -218,6 +273,5 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 </script>
-
 </body>
 </html>
