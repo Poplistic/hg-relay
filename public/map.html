@@ -30,11 +30,6 @@ html,body{
 	padding:12px;
 	box-shadow:0 14px 40px rgba(120,20,40,.45);
 }
-.ui b{
-	font-size:11px;
-	letter-spacing:.12em;
-	text-transform:uppercase;
-}
 .name{
 	margin-top:6px;
 	padding:6px 8px;
@@ -42,9 +37,7 @@ html,body{
 	cursor:pointer;
 	background:rgba(255,80,100,.08);
 }
-.name:hover{
-	background:rgba(255,120,140,.28);
-}
+.name:hover{ background:rgba(255,120,140,.28); }
 </style>
 
 <script type="importmap">
@@ -67,7 +60,6 @@ import { OBJLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/j
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth,innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
-renderer.autoClear = false;
 document.body.appendChild(renderer.domElement);
 
 /* ================= SCENE ================= */
@@ -84,9 +76,6 @@ sun.position.set(3000,6000,2000);
 scene.add(sun);
 
 /* ================= ARENA ================= */
-const arenaGroup = new THREE.Group();
-scene.add(arenaGroup);
-
 new OBJLoader().load("/arena.obj", obj=>{
 	obj.traverse(n=>{
 		if(n.isMesh){
@@ -100,7 +89,7 @@ new OBJLoader().load("/arena.obj", obj=>{
 		}
 	});
 	obj.scale.setScalar(4);
-	arenaGroup.add(obj);
+	scene.add(obj);
 });
 
 /* ================= UI ================= */
@@ -108,32 +97,20 @@ const ui = document.getElementById("ui");
 
 /* ================= PLAYERS ================= */
 const players = new Map();
+let follow=null;
 
 function makePlayer(){
-	const g = new THREE.Group();
-
-	const body = new THREE.Mesh(
+	const g=new THREE.Group();
+	g.add(new THREE.Mesh(
 		new THREE.SphereGeometry(10,24,24),
 		new THREE.MeshStandardMaterial({
 			color:0xff6b7a,
 			emissive:0xff2a40,
 			emissiveIntensity:.7
 		})
-	);
-	g.add(body);
-
-	const points = [new THREE.Vector3(), new THREE.Vector3(0,0,-100)];
-	const geo = new THREE.BufferGeometry().setFromPoints(points);
-	const line = new THREE.Line(geo,new THREE.LineBasicMaterial({color:0xffa0aa}));
-	line.rotation.x = Math.PI/2;
-	g.add(line);
-
-	g.userData.dirLine = line;
+	));
 	return g;
 }
-
-/* ================= UPDATE ================= */
-let follow=null;
 
 async function updatePlayers(){
 	const data = await fetch("/map").then(r=>r.json());
@@ -149,7 +126,6 @@ async function updatePlayers(){
 		}
 		const m=players.get(p.id);
 		m.position.set(p.x,p.y+20,p.z);
-		m.rotation.y=p.yaw;
 
 		const d=document.createElement("div");
 		d.className="name";
@@ -166,21 +142,27 @@ async function updatePlayers(){
 }
 setInterval(updatePlayers,200);
 
-/* ================= CAMERA CONTROLS ================= */
+/* ================= CAMERA ================= */
 const cam = {
 	yaw:0,
 	pitch:0,
+	targetYaw:0,
+	targetPitch:0,
 	velocity:new THREE.Vector3(),
+
 	accel:0.9,
-	damping:0.85,
-	speed:1.0,
-	boost:3.0
+	damping:0.86,
+	speed:1.2,
+	boost:3.0,
+
+	rotSmooth:0.12,
+	followSmooth:0.06
 };
 
-const keys={w:0,a:0,s:0,d:0,shift:0};
+const keys={w:0,a:0,s:0,d:0,space:0,ctrl:0,shift:0};
 let rotating=false;
 
-/* Mouse look */
+/* Mouse */
 renderer.domElement.addEventListener("mousedown",e=>{
 	if(e.button===0){
 		rotating=true;
@@ -193,9 +175,9 @@ document.addEventListener("mouseup",()=>{
 });
 document.addEventListener("mousemove",e=>{
 	if(rotating && document.pointerLockElement){
-		cam.yaw   -= e.movementX*0.002;
-		cam.pitch -= e.movementY*0.002;
-		cam.pitch = Math.max(-1.45,Math.min(1.45,cam.pitch));
+		cam.targetYaw   -= e.movementX*0.002;
+		cam.targetPitch -= e.movementY*0.002;
+		cam.targetPitch=Math.max(-1.45,Math.min(1.45,cam.targetPitch));
 	}
 });
 
@@ -205,14 +187,18 @@ addEventListener("keydown",e=>{
 	if(e.code==="KeyA")keys.a=1;
 	if(e.code==="KeyS")keys.s=1;
 	if(e.code==="KeyD")keys.d=1;
+	if(e.code==="Space")keys.space=1;
+	if(e.code==="ControlLeft")keys.ctrl=1;
 	if(e.code==="ShiftLeft")keys.shift=1;
-	if("KeyWKeyAKeySKeyD".includes(e.code)) follow=null;
+	if("KeyWKeyAKeySKeyDSpaceControlLeft".includes(e.code)) follow=null;
 });
 addEventListener("keyup",e=>{
 	if(e.code==="KeyW")keys.w=0;
 	if(e.code==="KeyA")keys.a=0;
 	if(e.code==="KeyS")keys.s=0;
 	if(e.code==="KeyD")keys.d=0;
+	if(e.code==="Space")keys.space=0;
+	if(e.code==="ControlLeft")keys.ctrl=0;
 	if(e.code==="ShiftLeft")keys.shift=0;
 });
 
@@ -220,12 +206,17 @@ addEventListener("keyup",e=>{
 function animate(){
 	requestAnimationFrame(animate);
 
+	/* Smooth rotation */
+	cam.yaw   += (cam.targetYaw-cam.yaw)*cam.rotSmooth;
+	cam.pitch += (cam.targetPitch-cam.pitch)*cam.rotSmooth;
+
 	camera.rotation.order="YXZ";
 	camera.rotation.y=cam.yaw;
 	camera.rotation.x=cam.pitch;
 
 	const forward=new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
 	const right=new THREE.Vector3(1,0,0).applyEuler(camera.rotation);
+	const up=new THREE.Vector3(0,1,0);
 
 	let speed=cam.speed*(keys.shift?cam.boost:1);
 
@@ -233,15 +224,18 @@ function animate(){
 	if(keys.s) cam.velocity.addScaledVector(forward,-cam.accel*speed);
 	if(keys.a) cam.velocity.addScaledVector(right,  -cam.accel*speed);
 	if(keys.d) cam.velocity.addScaledVector(right,   cam.accel*speed);
+	if(keys.space) cam.velocity.addScaledVector(up, cam.accel*speed);
+	if(keys.ctrl)  cam.velocity.addScaledVector(up,-cam.accel*speed);
 
 	cam.velocity.multiplyScalar(cam.damping);
 	camera.position.add(cam.velocity);
 
+	/* Cinematic follow */
 	if(follow){
-		const t=follow.position.clone();
-		const off=new THREE.Vector3(0,140,-320).applyEuler(camera.rotation);
-		camera.position.lerp(t.add(off),.08);
-		cam.velocity.set(0,0,0);
+		const desired=follow.position.clone()
+			.add(new THREE.Vector3(0,160,-360).applyEuler(camera.rotation));
+		camera.position.lerp(desired,cam.followSmooth);
+		cam.velocity.multiplyScalar(0.5);
 	}
 
 	renderer.render(scene,camera);
