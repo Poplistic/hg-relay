@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Sky Editor</title>
@@ -45,7 +45,6 @@ label {
   opacity: 0.7;
 }
 
-/* ---------- INPUTS ---------- */
 input, select, button {
   width: 100%;
   margin-bottom: 8px;
@@ -61,9 +60,7 @@ input, select {
   color: white;
 }
 
-input[type="range"] {
-  padding: 0;
-}
+input[type="range"] { padding: 0; }
 
 button {
   padding: 8px;
@@ -74,13 +71,9 @@ button {
   box-shadow: 0 6px 14px rgba(80,120,255,0.35);
 }
 
-button:hover {
-  filter: brightness(1.1);
-}
+button:hover { filter: brightness(1.1); }
 
-select {
-  height: 80px;
-}
+select { height: 80px; }
 
 #preview {
   width: 100%;
@@ -126,36 +119,38 @@ select {
   <button onclick="save()">Save</button>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+<script type="module">
+/* ---------- IMPORTS ---------- */
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/OrbitControls.js";
 
-<script>
+/* ---------- SETUP ---------- */
 const API = "https://games-k04d.onrender.com/sky";
 const token = localStorage.getItem("token");
 
-let scene = new THREE.Scene();
+const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x06080f, 800, 2200);
 
-let camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 5000);
-camera.position.set(0,200,600);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 5000);
+camera.position.set(0, 200, 600);
 
-let renderer = new THREE.WebGLRenderer({antialias:true});
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
-let controls = new OrbitControls(camera, renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
 /* ---------- LIGHTING ---------- */
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-let key = new THREE.DirectionalLight(0x9bb4ff, 0.6);
-key.position.set(300,400,200);
+const key = new THREE.DirectionalLight(0x9bb4ff, 0.6);
+key.position.set(300, 400, 200);
 scene.add(key);
 
-/* ---------- SOFT SKY DOME ---------- */
+/* ---------- SKY DOME ---------- */
 const skyMat = new THREE.ShaderMaterial({
   side: THREE.BackSide,
   uniforms: {
@@ -185,7 +180,7 @@ scene.add(new THREE.Mesh(
   skyMat
 ));
 
-/* ---------- OBJECT SYSTEM (UNCHANGED LOGIC) ---------- */
+/* ---------- OBJECT SYSTEM ---------- */
 let objects = [];
 let selected = null;
 
@@ -205,12 +200,12 @@ function restore(i) {
   objects = [];
 
   JSON.parse(history[i]).forEach(d => {
-    let mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(200,100),
-      new THREE.MeshBasicMaterial({transparent:true})
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(200, 100),
+      new THREE.MeshBasicMaterial({ transparent: true })
     );
     scene.add(mesh);
-    objects.push({ data:d, mesh });
+    objects.push({ data: d, mesh });
     updateMesh(objects.at(-1));
   });
 
@@ -218,40 +213,42 @@ function restore(i) {
   select(objects[0]?.data.id);
 }
 
-function undo(){ if(historyIndex>0) restore(--historyIndex); }
-function redo(){ if(historyIndex<history.length-1) restore(++historyIndex); }
+window.undo = () => historyIndex > 0 && restore(--historyIndex);
+window.redo = () => historyIndex < history.length - 1 && restore(++historyIndex);
 
-function spherical(y,p,r){
+/* ---------- HELPERS ---------- */
+function spherical(y, p, r) {
   y = THREE.MathUtils.degToRad(y);
   p = THREE.MathUtils.degToRad(p);
   return new THREE.Vector3(
-    Math.cos(p)*Math.cos(y)*r,
-    Math.sin(p)*r,
-    Math.cos(p)*Math.sin(y)*r
+    Math.cos(p) * Math.cos(y) * r,
+    Math.sin(p) * r,
+    Math.cos(p) * Math.sin(y) * r
   );
 }
 
-function thumb(id){
+function thumb(id) {
   return `https://www.roblox.com/asset-thumbnail/image?assetId=${id.replace(/\D/g,"")}&width=420&height=420&format=png`;
 }
 
-function addObject(){
-  let d = { id:Date.now()+"", imageId:"", text:"", yaw:0, pitch:25, radius:800, scale:1 };
-  let mesh = new THREE.Mesh(
+/* ---------- UI ---------- */
+window.addObject = () => {
+  const d = { id: Date.now()+"", imageId:"", text:"", yaw:0, pitch:25, radius:800, scale:1 };
+  const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(200,100),
-    new THREE.MeshBasicMaterial({transparent:true})
+    new THREE.MeshBasicMaterial({ transparent:true })
   );
   scene.add(mesh);
   objects.push({ data:d, mesh });
   updateList();
   select(d.id);
   snapshot();
-}
+};
 
 function updateList(){
   list.innerHTML="";
   objects.forEach(o=>{
-    let opt=document.createElement("option");
+    const opt=document.createElement("option");
     opt.value=o.data.id;
     opt.text=o.data.id;
     list.appendChild(opt);
@@ -265,17 +262,16 @@ function select(id){
 }
 
 function updateMesh(o){
-  let d=o.data;
-  let pos=spherical(d.yaw,d.pitch,d.radius);
+  const d=o.data;
+  const pos=spherical(d.yaw,d.pitch,d.radius);
   o.mesh.position.copy(pos);
   o.mesh.lookAt(0,pos.y,0);
   o.mesh.scale.setScalar(d.scale);
 }
 
-/* ---------- UI ---------- */
 function syncUI(){
   if(!selected) return;
-  let d=selected.data;
+  const d=selected.data;
   image.value=d.imageId;
   text.value=d.text;
   yaw.value=d.yaw;
@@ -309,31 +305,8 @@ function syncUI(){
 
 list.onchange=()=>select(list.value);
 
-/* ---------- DRAG ---------- */
-let ray=new THREE.Raycaster(), mouse=new THREE.Vector2(), drag=false;
-
-renderer.domElement.onmousedown=e=>{
-  mouse.x=(e.clientX/innerWidth)*2-1;
-  mouse.y=-(e.clientY/innerHeight)*2+1;
-  ray.setFromCamera(mouse,camera);
-  let hit=ray.intersectObjects(objects.map(o=>o.mesh));
-  if(hit.length){
-    drag=true;
-    select(objects.find(o=>o.mesh===hit[0].object).data.id);
-  }
-};
-
-renderer.domElement.onmouseup=()=>{ if(drag){ drag=false; snapshot(); } };
-
-renderer.domElement.onmousemove=e=>{
-  if(!drag||!selected) return;
-  selected.data.yaw+=e.movementX*0.2;
-  selected.data.pitch-=e.movementY*0.2;
-  syncUI();
-};
-
 /* ---------- SAVE ---------- */
-async function save(){
+window.save = async () => {
   await fetch(API,{
     method:"POST",
     headers:{
@@ -343,7 +316,7 @@ async function save(){
     body:JSON.stringify(objects.map(o=>o.data))
   });
   alert("Saved");
-}
+};
 
 /* ---------- LOOP ---------- */
 function animate(){
