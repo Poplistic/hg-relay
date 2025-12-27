@@ -2,30 +2,42 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Sky Editor 3D</title>
+<title>Sky Editor</title>
+
 <style>
-body { margin:0; overflow:hidden; background:#000; color:white; font-family:sans-serif; }
+body { margin:0; overflow:hidden; background:black; color:white; font-family:sans-serif; }
+
 #ui {
-  position:absolute; top:10px; left:10px;
+  position:absolute;
+  top:10px;
+  left:10px;
+  width:270px;
+  padding:10px;
   background:rgba(0,0,0,0.75);
-  padding:10px; border-radius:8px; width:260px;
+  border-radius:12px;
 }
-input, button { width:100%; margin-bottom:6px; }
-button { cursor:pointer; }
-.selected { outline:2px solid yellow; }
+
+input, select, button {
+  width:100%;
+  margin-bottom:6px;
+}
 </style>
 </head>
+
 <body>
 
 <div id="ui">
-  <h3>Sky Objects</h3>
+  <button onclick="undo()">Undo</button>
+  <button onclick="redo()">Redo</button>
+  <hr>
+
   <select id="list" size="4"></select>
   <button onclick="addObject()">Add Object</button>
   <hr>
 
   Image ID
   <input id="image">
-  <img id="preview" style="width:100%; display:none;">
+  <img id="preview" style="width:100%;display:none">
 
   Text
   <input id="text">
@@ -58,143 +70,171 @@ controls.enableDamping = true;
 
 scene.add(new THREE.AmbientLight(0xffffff,1));
 
-/* Sky dome */
 scene.add(new THREE.Mesh(
   new THREE.SphereGeometry(1500,32,32),
   new THREE.MeshBasicMaterial({color:0x111133, side:THREE.BackSide})
 ));
 
-/* State */
 let objects = [];
 let selected = null;
 
-/* Helpers */
-function spherical(yaw,pitch,radius){
-  yaw = THREE.MathUtils.degToRad(yaw);
-  pitch = THREE.MathUtils.degToRad(pitch);
+/* ---------- UNDO / REDO ---------- */
+let history = [];
+let historyIndex = -1;
+
+function snapshot() {
+  const state = JSON.stringify(objects.map(o => o.data));
+  if (history[historyIndex] === state) return;
+  history = history.slice(0, historyIndex + 1);
+  history.push(state);
+  historyIndex++;
+}
+
+function restore(i) {
+  objects.forEach(o => scene.remove(o.mesh));
+  objects = [];
+
+  JSON.parse(history[i]).forEach(d => {
+    let mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(200,100),
+      new THREE.MeshBasicMaterial({transparent:true})
+    );
+    scene.add(mesh);
+    objects.push({ data:d, mesh });
+    updateMesh(objects.at(-1));
+  });
+
+  updateList();
+  select(objects[0]?.data.id);
+}
+
+function undo() {
+  if (historyIndex > 0) restore(--historyIndex);
+}
+
+function redo() {
+  if (historyIndex < history.length - 1) restore(++historyIndex);
+}
+
+window.addEventListener("keydown", e => {
+  if (e.ctrlKey && e.key === "z") undo();
+  if (e.ctrlKey && e.key === "y") redo();
+});
+
+/* ---------- HELPERS ---------- */
+function spherical(y,p,r){
+  y = THREE.MathUtils.degToRad(y);
+  p = THREE.MathUtils.degToRad(p);
   return new THREE.Vector3(
-    Math.cos(pitch)*Math.cos(yaw)*radius,
-    Math.sin(pitch)*radius,
-    Math.cos(pitch)*Math.sin(yaw)*radius
+    Math.cos(p)*Math.cos(y)*r,
+    Math.sin(p)*r,
+    Math.cos(p)*Math.sin(y)*r
   );
 }
 
-function robloxThumb(id){
+function thumb(id){
   return `https://www.roblox.com/asset-thumbnail/image?assetId=${id.replace(/\D/g,"")}&width=420&height=420&format=png`;
 }
 
-/* Add object */
+/* ---------- OBJECTS ---------- */
 function addObject(){
-  let id = "obj_" + Date.now();
-  let data = { id, imageId:"", text:"", yaw:0, pitch:25, radius:800, scale:1 };
-
-  let plane = new THREE.Mesh(
+  let d = { id:Date.now()+"", imageId:"", text:"", yaw:0, pitch:25, radius:800, scale:1 };
+  let mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(200,100),
-    new THREE.MeshBasicMaterial({color:0xffffff, transparent:true})
+    new THREE.MeshBasicMaterial({transparent:true})
   );
-  scene.add(plane);
-
-  objects.push({ data, mesh:plane });
+  scene.add(mesh);
+  objects.push({ data:d, mesh });
   updateList();
-  select(id);
+  select(d.id);
+  snapshot();
 }
 
-/* Selection */
 function updateList(){
-  list.innerHTML = "";
+  list.innerHTML="";
   objects.forEach(o=>{
-    let opt = document.createElement("option");
-    opt.value = o.data.id;
-    opt.textContent = o.data.id;
+    let opt=document.createElement("option");
+    opt.value=o.data.id;
+    opt.text=o.data.id;
     list.appendChild(opt);
   });
 }
 
 function select(id){
   selected = objects.find(o=>o.data.id===id);
-  list.value = id;
+  list.value=id;
   syncUI();
 }
 
-/* UI sync */
+function updateMesh(o){
+  let d=o.data;
+  let pos=spherical(d.yaw,d.pitch,d.radius);
+  o.mesh.position.copy(pos);
+  o.mesh.lookAt(0,pos.y,0);
+  o.mesh.scale.setScalar(d.scale);
+}
+
+/* ---------- UI ---------- */
 function syncUI(){
   if(!selected) return;
-  let d = selected.data;
-
-  image.value = d.imageId;
-  text.value = d.text;
-  yaw.value = d.yaw;
-  pitch.value = d.pitch;
-  radius.value = d.radius;
-  scale.value = d.scale;
+  let d=selected.data;
+  image.value=d.imageId;
+  text.value=d.text;
+  yaw.value=d.yaw;
+  pitch.value=d.pitch;
+  radius.value=d.radius;
+  scale.value=d.scale;
 
   if(d.imageId){
-    preview.src = robloxThumb(d.imageId);
-    preview.style.display = "block";
+    preview.src=thumb(d.imageId);
+    preview.style.display="block";
+    selected.mesh.material.map=new THREE.TextureLoader().load(preview.src);
+    selected.mesh.material.needsUpdate=true;
   }
-
-  updateMesh();
 }
 
-function updateMesh(){
-  let d = selected.data;
-  let pos = spherical(d.yaw,d.pitch,d.radius);
-  selected.mesh.position.copy(pos);
-  selected.mesh.lookAt(0,pos.y,0);
-  selected.mesh.scale.setScalar(d.scale);
-}
-
-/* UI events */
 [list,image,text,yaw,pitch,radius,scale].forEach(el=>{
-  el.oninput = ()=>{
+  el.oninput=()=>{
     if(!selected) return;
-    let d = selected.data;
-    d.imageId = image.value;
-    d.text = text.value;
-    d.yaw = +yaw.value;
-    d.pitch = +pitch.value;
-    d.radius = +radius.value;
-    d.scale = +scale.value;
-
-    if(image.value){
-      preview.src = robloxThumb(image.value);
-      preview.style.display = "block";
-      selected.mesh.material.map = new THREE.TextureLoader().load(preview.src);
-      selected.mesh.material.needsUpdate = true;
-    }
-
-    updateMesh();
+    Object.assign(selected.data,{
+      imageId:image.value,
+      text:text.value,
+      yaw:+yaw.value,
+      pitch:+pitch.value,
+      radius:+radius.value,
+      scale:+scale.value
+    });
+    updateMesh(selected);
+    snapshot();
   };
 });
 
-list.onchange = ()=> select(list.value);
+list.onchange=()=>select(list.value);
 
-/* Mouse drag */
-let raycaster = new THREE.Raycaster();
-let mouse = new THREE.Vector2();
-let dragging = false;
+/* ---------- DRAG ---------- */
+let ray=new THREE.Raycaster(), mouse=new THREE.Vector2(), drag=false;
 
-renderer.domElement.onmousedown = e=>{
-  mouse.x = (e.clientX/innerWidth)*2-1;
-  mouse.y = -(e.clientY/innerHeight)*2+1;
-  raycaster.setFromCamera(mouse,camera);
-  let hits = raycaster.intersectObjects(objects.map(o=>o.mesh));
-  if(hits.length){
-    dragging = true;
-    select(objects.find(o=>o.mesh===hits[0].object).data.id);
+renderer.domElement.onmousedown=e=>{
+  mouse.x=(e.clientX/innerWidth)*2-1;
+  mouse.y=-(e.clientY/innerHeight)*2+1;
+  ray.setFromCamera(mouse,camera);
+  let hit=ray.intersectObjects(objects.map(o=>o.mesh));
+  if(hit.length){
+    drag=true;
+    select(objects.find(o=>o.mesh===hit[0].object).data.id);
   }
 };
 
-renderer.domElement.onmouseup = ()=> dragging=false;
+renderer.domElement.onmouseup=()=>{ if(drag){ drag=false; snapshot(); } };
 
-renderer.domElement.onmousemove = e=>{
-  if(!dragging || !selected) return;
-  selected.data.yaw += e.movementX * 0.2;
-  selected.data.pitch -= e.movementY * 0.2;
+renderer.domElement.onmousemove=e=>{
+  if(!drag||!selected) return;
+  selected.data.yaw+=e.movementX*0.2;
+  selected.data.pitch-=e.movementY*0.2;
   syncUI();
 };
 
-/* Save */
+/* ---------- SAVE ---------- */
 async function save(){
   await fetch(API,{
     method:"POST",
@@ -207,7 +247,7 @@ async function save(){
   alert("Saved");
 }
 
-/* Render */
+/* ---------- LOOP ---------- */
 function animate(){
   requestAnimationFrame(animate);
   controls.update();
@@ -215,5 +255,6 @@ function animate(){
 }
 animate();
 </script>
+
 </body>
 </html>
