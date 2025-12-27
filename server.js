@@ -1,46 +1,67 @@
-import express from "express";
-import cors from "cors";
+const express = require("express");
+const cors = require("cors");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const API_KEY = process.env.API_KEY || "CHANGE_ME";
+const SECRET = process.env.JWT_SECRET || "supersecretkey";
 
-// Stored dome state
-let domeState = {
-  imageId: "0",
-  offsetX: 0,
-  offsetY: 0,
-  scale: 1,
-  rotation: 0
-};
+/* ===== ADMIN ACCOUNT (CHANGE THESE) ===== */
+const ADMIN_USER = "admin";
+const ADMIN_PASSWORD_HASH = bcrypt.hashSync("Pmy0vJa9JtUVqBjkVZEq", 10);
 
-// Website updates dome
-app.post("/update-dome", (req, res) => {
-  if (req.body.apiKey !== API_KEY) {
-    return res.status(403).json({ error: "Invalid API key" });
+/* ===== SKY OBJECT DATA ===== */
+let skyObjects = [
+  {
+    id: "main_banner",
+    imageId: "rbxassetid://0",
+    text: "100TH HUNGER GAMES",
+    radius: 700,
+    height: 350,
+    speed: 0.15
+  }
+];
+
+/* ===== AUTH ===== */
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+
+  if (username !== ADMIN_USER) {
+    return res.status(401).json({ error: "Invalid login" });
   }
 
-  const { imageId, offsetX, offsetY, scale, rotation } = req.body;
+  const valid = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+  if (!valid) {
+    return res.status(401).json({ error: "Invalid login" });
+  }
 
-  domeState = {
-    imageId: String(imageId),
-    offsetX: Number(offsetX),
-    offsetY: Number(offsetY),
-    scale: Number(scale),
-    rotation: Number(rotation)
-  };
+  const token = jwt.sign({ username }, SECRET, { expiresIn: "2h" });
+  res.json({ token });
+});
 
+function auth(req, res, next) {
+  const token = req.headers.authorization;
+  if (!token) return res.sendStatus(403);
+
+  try {
+    jwt.verify(token, SECRET);
+    next();
+  } catch {
+    res.sendStatus(403);
+  }
+}
+
+/* ===== API ===== */
+app.get("/sky", (req, res) => {
+  res.json(skyObjects);
+});
+
+app.post("/sky", auth, (req, res) => {
+  skyObjects = req.body;
   res.json({ success: true });
 });
 
-// Roblox polls dome state
-app.get("/dome-state", (req, res) => {
-  res.json(domeState);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Dome controller running on port", PORT);
-});
+app.listen(3000, () => console.log("Sky API running"));
