@@ -1,0 +1,17 @@
+<h1>Sky Object Controller</h1>
+<textarea id="json" rows="20" cols="80"></textarea><br>
+<button onclick="save()">Save</button>
+
+<script>
+async function save() {
+  await fetch("https://games-k04d.onrender.com/sky", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": localStorage.getItem("token")
+    },
+    body: json.value
+  });
+  alert("Updated");
+}
+</script>
