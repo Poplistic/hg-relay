@@ -158,32 +158,39 @@ sun.position.set(300, 400, 200);
 scene.add(sun);
 
 /* ---------- SKY DOME ---------- */
+const skyMaterial = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  depthWrite: false,
+  depthTest: false,
+  fog: false,
+  uniforms: {
+    top: { value: new THREE.Color(0x0b1430) },
+    bottom: { value: new THREE.Color(0x020409) }
+  },
+  vertexShader: `
+    varying vec3 vPos;
+    void main(){
+      vPos = position;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 top;
+    uniform vec3 bottom;
+    varying vec3 vPos;
+    void main(){
+      float h = normalize(vPos).y * 0.5 + 0.5;
+      gl_FragColor = vec4(mix(bottom, top, h), 1.0);
+    }
+  `
+});
+
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(2000, 48, 32),
-  new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    uniforms: {
-      top: { value: new THREE.Color(0x0b1430) },
-      bottom: { value: new THREE.Color(0x020409) }
-    },
-    vertexShader: `
-      varying vec3 vPos;
-      void main(){
-        vPos = position;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 top;
-      uniform vec3 bottom;
-      varying vec3 vPos;
-      void main(){
-        float h = normalize(vPos).y * 0.5 + 0.5;
-        gl_FragColor = vec4(mix(bottom, top, h), 1.0);
-      }
-    `
-  })
+  skyMaterial
 );
+
+sky.renderOrder = -1;
 scene.add(sky);
 
 /* ---------- OBJECT SYSTEM ---------- */
