@@ -124,21 +124,18 @@ select { height: 80px; }
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/OrbitControls.js";
 
-/* ---------- SETUP ---------- */
-const API = "https://games-k04d.onrender.com/sky";
-const token = localStorage.getItem("token");
-
+/* ---------- SCENE ---------- */
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x06080f, 800, 2200);
+scene.fog = new THREE.Fog(0x020409, 800, 2200);
 
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 5000);
 camera.position.set(0, 200, 600);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setClearColor(0x000000, 1);
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x020409, 1);
 document.body.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -147,44 +144,42 @@ controls.enableDamping = true;
 /* ---------- LIGHTING ---------- */
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-const key = new THREE.DirectionalLight(0x9bb4ff, 0.6);
-key.position.set(300, 400, 200);
-scene.add(key);
+const sun = new THREE.DirectionalLight(0x9bb4ff, 0.6);
+sun.position.set(300, 400, 200);
+scene.add(sun);
 
 /* ---------- SKY DOME ---------- */
-const skyMat = new THREE.ShaderMaterial({
-  side: THREE.BackSide,
-  uniforms: {
-    top: { value: new THREE.Color(0x0b1430) },
-    bottom: { value: new THREE.Color(0x020409) }
-  },
-  vertexShader: `
-    varying vec3 vPos;
-    void main(){
-      vPos = position;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-    }
-  `,
-  fragmentShader: `
-    uniform vec3 top;
-    uniform vec3 bottom;
-    varying vec3 vPos;
-    void main(){
-      float h = normalize(vPos).y * 0.5 + 0.5;
-      gl_FragColor = vec4(mix(bottom, top, h), 1.0);
-    }
-  `
-});
-
-scene.add(new THREE.Mesh(
+const sky = new THREE.Mesh(
   new THREE.SphereGeometry(2000, 48, 32),
-  skyMat
-));
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+      top: { value: new THREE.Color(0x0b1430) },
+      bottom: { value: new THREE.Color(0x020409) }
+    },
+    vertexShader: `
+      varying vec3 vPos;
+      void main(){
+        vPos = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 top;
+      uniform vec3 bottom;
+      varying vec3 vPos;
+      void main(){
+        float h = normalize(vPos).y * 0.5 + 0.5;
+        gl_FragColor = vec4(mix(bottom, top, h), 1.0);
+      }
+    `
+  })
+);
+scene.add(sky);
 
 /* ---------- OBJECT SYSTEM ---------- */
 let objects = [];
 let selected = null;
-
 let history = [];
 let historyIndex = -1;
 
@@ -308,11 +303,11 @@ list.onchange=()=>select(list.value);
 
 /* ---------- SAVE ---------- */
 window.save = async () => {
-  await fetch(API,{
+  await fetch("https://games-k04d.onrender.com/sky",{
     method:"POST",
     headers:{
       "Content-Type":"application/json",
-      "Authorization":token
+      "Authorization":localStorage.getItem("token")
     },
     body:JSON.stringify(objects.map(o=>o.data))
   });
