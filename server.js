@@ -7,11 +7,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const SECRET = process.env.JWT_SECRET || "supersecretkey";
+const SECRET = process.env.JWT_SECRET || "5a079075fb487a6c345021e90fefed64";
 
 /* ===== ADMIN ACCOUNT (CHANGE THESE) ===== */
 const ADMIN_USER = "admin";
-const ADMIN_PASSWORD_HASH = bcrypt.hashSync("Pmy0vJa9JtUVqBjkVZEq", 10);
+const ADMIN_PASSWORD_HASH = bcrypt.hashSync("5a079075fb487a6c345021e90fefed64", 10);
 
 /* ===== SKY OBJECT DATA ===== */
 let skyObjects = [
@@ -65,3 +65,4 @@ app.post("/sky", auth, (req, res) => {
 });
 
 app.listen(3000, () => console.log("Sky API running"));
+
